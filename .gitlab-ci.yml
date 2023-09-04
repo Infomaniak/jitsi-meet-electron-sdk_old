@@ -1,0 +1,31 @@
+# add 'node_modules' to cache for speeding up builds
+cache:
+    paths:
+        - node_modules/ # Node modules and dependencies
+
+stages:
+    - publish
+    # - deploy
+
+.base:
+    image: node:16.14.2
+    only:
+        - master
+    except:
+        refs:
+            - tags
+
+verdaccio:
+    stage: publish
+    extends: .base
+    script:
+        - npm config set strict-ssl false
+        - echo '//verdaccio.dev.infomaniak.ch/:_authToken=${NPM_TOKEN}' > build/.npmrc
+        - cp .npmignore build/.npmignore
+        - npm publish --registry https://verdaccio.dev.infomaniak.ch
+    artifacts:
+        paths:
+            - build
+        expire_in: 1 hour
+    only:
+        - master
