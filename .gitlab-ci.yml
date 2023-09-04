@@ -20,8 +20,7 @@ verdaccio:
     extends: .base
     script:
         - npm config set strict-ssl false
-        - echo '//verdaccio.dev.infomaniak.ch/:_authToken=${NPM_TOKEN}' > build/.npmrc
-        - cp .npmignore build/.npmignore
+        - echo '//verdaccio.dev.infomaniak.ch/:_authToken=${NPM_TOKEN}' > .npmrc
         - npm publish --registry https://verdaccio.dev.infomaniak.ch
     artifacts:
         paths:
