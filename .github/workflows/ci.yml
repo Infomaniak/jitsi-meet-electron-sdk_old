@@ -56,7 +56,7 @@ jobs:
       with:
         node-version: '16'
         registry-url: 'https://npm.pkg.github.com'
-    - run: echo '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' > .npmrc
+        scope: '@ik'
     - run: npm publish --registry https://npm.pkg.github.com
       env:
         NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

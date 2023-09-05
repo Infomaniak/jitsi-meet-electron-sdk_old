@@ -15,7 +15,10 @@
   "pre-commit": [
     "lint"
   ],
-  "repository": "https://github.com/Infomaniak/jitsi-meet-electron-sdk",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Infomaniak/jitsi-meet-electron-sdk.git"
+  },
   "keywords": [
     "jingle",
     "webrtc",
