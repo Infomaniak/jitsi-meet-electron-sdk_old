@@ -52,16 +52,10 @@ jobs:
       with:
         name: prebuilds
         path: prebuilds
-    - uses: phips28/gh-action-bump-version@95099cd5edcdae43499bc94202b9d907e739e9c8
-      with:
-        tag-prefix: 'v'
-        version-type:  'patch'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - uses: actions/setup-node@v3
       with:
         node-version: '16'
-        registry-url: 'https://registry.npmjs.org'
-    - run: npm publish --access public
+        registry-url: 'https://verdaccio.dev.infomaniak.ch'
+    - run: npm publish --registry https://verdaccio.dev.infomaniak.ch
       env:
         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
