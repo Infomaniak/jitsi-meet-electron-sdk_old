@@ -56,7 +56,7 @@ jobs:
       with:
         node-version: '16'
         registry-url: 'https://verdaccio.dev.infomaniak.ch'
-    - run: echo '//verdaccio.dev.infomaniak.ch/:_authToken=${NODE_AUTH_TOKEN}' > .npmrc
+    - run: echo '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' > .npmrc
     - run: npm publish
       env:
-        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
