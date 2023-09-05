@@ -1,5 +1,5 @@
 {
-  "name": "@antonbuks/jitsi-meet-electron-sdk",
+  "name": "@infomaniak/jitsi-meet-electron-sdk",
   "version": "6.0.10-nightly.1",
   "description": "Utilities for jitsi-meet-electron project",
   "main": "index.js",
@@ -17,7 +17,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/antonbuks/jitsi-meet-electron-sdk.git"
+    "url": "https://github.com/infomaniak/jitsi-meet-electron-sdk.git"
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com/"
