@@ -56,6 +56,6 @@ jobs:
       with:
         node-version: '16'
         registry-url: 'https://verdaccio.dev.infomaniak.ch'
-    - run: npm publish --registry https://verdaccio.dev.infomaniak.ch
+    - run: npm publish
       env:
         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
