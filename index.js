@@ -1,4 +1,5 @@
 const { RemoteControl, RemoteControlMain } = require('./remotecontrol');
+const { RemoteDraw, RemoteDrawMain } = require('./remotedraw');
 const { setupScreenSharingRender, setupScreenSharingMain } = require('./screensharing');
 const {
     cleanupAlwaysOnTopMain,
@@ -20,6 +21,8 @@ const {
 module.exports = {
     RemoteControl,
     RemoteControlMain,
+    RemoteDraw,
+    RemoteDrawMain,
     cleanupAlwaysOnTopMain,
     cleanupPowerMonitorMain,
     setupScreenSharingRender,
