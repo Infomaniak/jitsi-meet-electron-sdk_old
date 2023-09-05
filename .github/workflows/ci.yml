@@ -55,7 +55,7 @@ jobs:
     - uses: actions/setup-node@v3
       with:
         node-version: '16'
-        registry-url: 'https://verdaccio.dev.infomaniak.ch'
+        registry-url: 'https://npm.pkg.github.com'
     - run: echo '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' > .npmrc
     - run: npm publish
       env:
