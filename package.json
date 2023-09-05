@@ -42,7 +42,7 @@
     "postis": "^2.2.0"
   },
   "devDependencies": {
-    "eslint": ">=3",
+    "eslint": ">=8",
     "eslint-plugin-jsdoc": "*",
     "husky": "^8.0.1",
     "mocha": "^10.0.0",
