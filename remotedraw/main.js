@@ -237,9 +237,6 @@ class RemoteDraw {
             }
         });
 
-        console.log('new ScreenShareDrawer', JSON.stringify(this._screenShareDrawer));
-        console.log('display', JSON.stringify(display));
-
         // for Windows OS, only enable protection for builds higher or equal to Windows 10 Version 2004
         // which have the flag WDA_EXCLUDEFROMCAPTURE(which makes the window completely invisible on capture)
         // For older Windows versions, we leave the window completely visible, including content, on capture,
