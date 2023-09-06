@@ -25,8 +25,9 @@ class RemoteDraw {
      */
     constructor(jitsiMeetWindow) {
         this._jitsiMeetWindow = jitsiMeetWindow;
-        this._onScreenSharingEvent = this._onScreenSharingEvent.bind(this);
+
         this.cleanup = this.cleanup.bind(this);
+        this._onScreenSharingEvent = this._onScreenSharingEvent.bind(this);
         this._handleDisplayMetricsChanged = this._handleDisplayMetricsChanged.bind(this);
         this._handleGetDisplayEvent = this._handleGetDisplayEvent.bind(this);
 
@@ -172,9 +173,6 @@ class RemoteDraw {
      */
     _onScreenSharingEvent(event, { data }) {
         switch (data.name) {
-        case SCREEN_SHARE_EVENTS.OPEN_TRACKER:
-            this._createScreenDraw();
-            break;
         case SCREEN_SHARE_EVENTS.CLOSE_TRACKER:
             if (this._screenShareDrawer) {
                 this._screenShareDrawer.close();
@@ -238,6 +236,9 @@ class RemoteDraw {
                 nodeIntegration: true
             }
         });
+
+        console.log('new ScreenShareDrawer', JSON.stringify(this._screenShareDrawer));
+        console.log('display', JSON.stringify(display));
 
         // for Windows OS, only enable protection for builds higher or equal to Windows 10 Version 2004
         // which have the flag WDA_EXCLUDEFROMCAPTURE(which makes the window completely invisible on capture)
