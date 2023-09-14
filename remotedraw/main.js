@@ -1,3 +1,4 @@
+/* global __dirname */
 const {
     app,
     ipcMain,
@@ -6,11 +7,13 @@ const {
 } = require('electron');
 const process = require('process');
 const os = require('os');
+const path = require('path');
 const { SCREEN_SHARE_EVENTS } = require('../screensharing/constants');
 const { SCREEN_SHARE_EVENTS_CHANNEL } = require('../screensharing/constants');
 const {
     DISPLAY_METRICS_CHANGED, GET_DISPLAY_EVENT,
-    SCREEN_SHARE_DRAW_EVENTS_CHANNEL
+    SCREEN_SHARE_DRAW_EVENTS_CHANNEL,
+    REQUESTS
 } = require('./constants');
 const { windowsEnableScreenProtection } = require('../helpers/functions');
 
@@ -18,16 +21,14 @@ const { windowsEnableScreenProtection } = require('../helpers/functions');
  * Parses the remote draw events and executes them via robotjs.
  */
 class RemoteDraw {
-    /**
-     * Constructs new instance and initializes the remote draw functionality.
-     *
-     * @param {HTMLElement} iframe the Jitsi Meet iframe.
-     */
     constructor(jitsiMeetWindow) {
         this._jitsiMeetWindow = jitsiMeetWindow;
 
         this.cleanup = this.cleanup.bind(this);
+
         this._onScreenSharingEvent = this._onScreenSharingEvent.bind(this);
+        this._onDrawEvent = this._onDrawEvent.bind(this);
+
         this._handleDisplayMetricsChanged = this._handleDisplayMetricsChanged.bind(this);
         this._handleGetDisplayEvent = this._handleGetDisplayEvent.bind(this);
 
@@ -37,26 +38,10 @@ class RemoteDraw {
             screen.on(DISPLAY_METRICS_CHANGED, this._handleDisplayMetricsChanged);
         });
 
+        ipcMain.on(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, this._onDrawEvent);
         ipcMain.on(SCREEN_SHARE_EVENTS_CHANNEL, this._onScreenSharingEvent);
 
-        // Clean up ipcMain handlers to avoid leaks.
         this._jitsiMeetWindow.on('closed', this.cleanup);
-
-        // LEGACY
-        // this._iframe = iframe;
-        // this._iframe.addEventListener('load', () => this._onIFrameLoad());
-        // this._onScreenSharingEvent = this._onScreenSharingEvent.bind(this);
-
-        // Listen for events coming in from the main render window and the screen share tracker window.
-        // electron.remote.ipcMain.on(SCREEN_SHARE_EVENTS_CHANNEL, this._onScreenSharingEvent);
-
-        /**
-         * The status ("up"/"down") of the mouse button.
-         * FIXME: Assuming that one button at a time can be pressed. Haven't
-         * noticed any issues but maybe we should store the status for every
-         * mouse button that we are processing.
-         */
-        // this._mouseButtonStatus = 'up';
     }
 
     /**
@@ -65,6 +50,7 @@ class RemoteDraw {
     cleanup() {
         ipcMain.removeListener(GET_DISPLAY_EVENT, this._handleGetDisplayEvent);
         ipcMain.removeListener(SCREEN_SHARE_EVENTS_CHANNEL, this._onScreenSharingEvent);
+        ipcMain.removeListener(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, this._onDrawEvent);
         screen.removeListener(DISPLAY_METRICS_CHANGED, this._handleDisplayMetricsChanged);
     }
 
@@ -165,6 +151,17 @@ class RemoteDraw {
         }
     }
 
+    _onDrawEvent(event, { data }) {
+        switch (data.name) {
+            case REQUESTS.start: {
+                this._createScreenDraw();
+                break;
+            }
+            default:
+                console.warn(`Unhandled ${SCREEN_SHARE_DRAW_EVENTS_CHANNEL}: ${data}`);
+        }
+    }
+
     /**
      * Listen for events coming on the screen sharing event channel.
      *
@@ -173,14 +170,14 @@ class RemoteDraw {
      */
     _onScreenSharingEvent(event, { data }) {
         switch (data.name) {
-        case SCREEN_SHARE_EVENTS.CLOSE_TRACKER:
-            if (this._screenShareDrawer) {
-                this._screenShareDrawer.close();
-                this._screenShareDrawer = undefined;
-            }
-            break;
+        // case SCREEN_SHARE_EVENTS.CLOSE_TRACKER:
+        //     if (this._screenShareDrawer) {
+        //         this._screenShareDrawer.close();
+        //         this._screenShareDrawer = undefined;
+        //     }
+        //     break;
         case SCREEN_SHARE_EVENTS.STOP_SCREEN_SHARE:
-            this._jitsiMeetWindow.webContents.send(SCREEN_SHARE_EVENTS_CHANNEL, { data });
+            // this._jitsiMeetWindow.webContents.send(SCREEN_SHARE_EVENTS_CHANNEL, { data });
             if (this._screenShareDrawer) {
                 this._screenShareDrawer.close();
                 this._screenShareDrawer = undefined;
@@ -224,16 +221,36 @@ class RemoteDraw {
             backgroundColor: '#00FFFFFF',
             hasShadow: false,
             resizable: false,
+            alwaysOnTop: true,
             movable: false,
             minimizable: false,
             maximizable: false,
             closable: false,
             focusable: false,
             skipTaskbar: true,
+
+            // FOR TESTING
+            // transparent: false,
+            // frame: true,
+            // fullscreen: false,
+            // // simpleFullscreen: true,
+            // fullscreenable: false,
+            // enableLargerThanScreen: true,
+            // backgroundColor: '#00FFFFFF',
+            // // hasShadow: false,
+            // alwaysOnTop: true,
+            // resizable: true,
+            // movable: true,
+            // minimizable: true,
+            // maximizable: false,
+            // closable: true,
+            // focusable: true,
+            // skipTaskbar: false,
             webPreferences: {
                 contextIsolation: false,
-                enableRemoteModule: true,
-                nodeIntegration: true
+                nodeIntegration: false,
+                preload: path.resolve(__dirname, './preload.js'),
+                sandbox: false
             }
         });
 
@@ -247,17 +264,31 @@ class RemoteDraw {
         }
 
 
-        this._screenShareDrawer.setAlwaysOnTop(true, 'pop-up-menu', 5);
+        // this._screenShareDrawer.setAlwaysOnTop(true, 'screen-saver');
+
+        // comment for testing with devtools
         this._screenShareDrawer.setVisibleOnAllWorkspaces(true);
         this._screenShareDrawer.setIgnoreMouseEvents(true);
         this._screenShareDrawer.setFocusable(false);
+
+        this._screenShareDrawer.on('closed', () => {
+            this._screenShareDrawer = undefined;
+        });
+
+        // this._screenShareDrawer.once('ready-to-show', () => {
+        //     if (this._screenShareDrawer && !this._screenShareDrawer.isDestroyed()) {
+        //         this._screenShareDrawer.showInactive();
+        //     }
+        // });
+
         this._screenShareDrawer.loadURL(`file://${__dirname}/remoteDraw.html`);
+
 
         ipcMain.on(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, (event, datas) => {
             try {
                 this._screenShareDrawer.webContents.send(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, datas, display);
             } catch (e) {
-                console.log(e);
+                console.warn(e);
             }
         });
     }

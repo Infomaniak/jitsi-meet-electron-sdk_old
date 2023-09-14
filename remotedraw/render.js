@@ -1,3 +1,6 @@
+
+/* global */
+
 /* eslint-disable eqeqeq */
 /* eslint-disable no-mixed-operators */
 const { ipcRenderer } = require('electron');
@@ -93,6 +96,11 @@ class RemoteDraw {
 
         if (this._display) {
             response.result = true;
+            ipcRenderer.send(constants.SCREEN_SHARE_DRAW_EVENTS_CHANNEL, {
+                data: {
+                    name: 'start'
+                },
+            });
         } else {
             response.error
                 = 'Error: Can\'t detect the display that is currently shared';
@@ -156,22 +164,7 @@ class RemoteDraw {
         }
         switch (data.type) {
         case EVENTS.mousemove: {
-            // const { width, height, x, y } = this._display.bounds;
-            // const scaleFactor = this._getDisplayScaleFactor();
-            // const destX = data.x * width * scaleFactor + x;
-            // const destY = data.y * height * scaleFactor + y;
-
-            // if (this._mouseButtonStatus === 'down') {
-            //     robot.dragMouse(destX, destY);
-            // } else {
-            //     robot.moveMouse(destX, destY);
-            // }
-            // break;
-            const {
-                width,
-                height
-            } = this._display.bounds;
-
+            const { width, height } = this._display.bounds;
             const scaleFactor = this._getDisplayScaleFactor();
             const destX = data.x * width * scaleFactor;
             const destY = data.y * height * scaleFactor;
@@ -187,6 +180,7 @@ class RemoteDraw {
                 },
                 display: this._display
             });
+
 
             break;
         }
