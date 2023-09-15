@@ -104,10 +104,6 @@ class RemoteDraw {
         } else {
             response.error
                 = 'Error: Can\'t detect the display that is currently shared';
-            if (this._screenShareDrawer) {
-                this._screenShareDrawer.close();
-                this._screenShareDrawer = undefined;
-            }
         }
 
         this._sendMessage(response);
@@ -118,6 +114,7 @@ class RemoteDraw {
      */
     _stop() {
         this._display = undefined;
+
         if (this._displayMetricsChangeListener) {
             ipcRenderer.removeListener('jitsi-remotedraw-displays-changed', this._displayMetricsChangeListener);
             this._displayMetricsChangeListener = undefined;

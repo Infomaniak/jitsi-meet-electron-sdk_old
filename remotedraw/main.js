@@ -275,11 +275,10 @@ class RemoteDraw {
             this._screenShareDrawer = undefined;
         });
 
-        // this._screenShareDrawer.once('ready-to-show', () => {
-        //     if (this._screenShareDrawer && !this._screenShareDrawer.isDestroyed()) {
-        //         this._screenShareDrawer.showInactive();
-        //     }
-        // });
+        this._screenShareDrawer.webContents.on('render-process-gone', (event, details) => {
+            console.log('close draw local canvas because renderer crashed', details);
+            this._screenShareDrawer.close();
+        });
 
         this._screenShareDrawer.loadURL(`file://${__dirname}/remoteDraw.html`);
 
