@@ -84,10 +84,12 @@ class RemoteDraw {
 
         switch (displays.length) {
         case 0:
+            this._display = undefined;
             return undefined;
         case 1:
             // On Linux probably we'll end up here even if there are
             // multiple monitors.
+            this._display = displays[0];
             return displays[0];
             // eslint-disable-next-line no-case-declarations
         default: { // > 1 display
@@ -112,6 +114,16 @@ class RemoteDraw {
                         // Electron don't seem to respect the scale factors of the other displays.
                         const { width, height } = display.bounds;
 
+                        this._display = {
+                            bounds: {
+                                x,
+                                y,
+                                width,
+                                height
+                            },
+                            scaleFactor: display.scaleFactor
+                        };
+
                         return {
                             bounds: {
                                 x,
@@ -123,6 +135,7 @@ class RemoteDraw {
                         };
                     }
 
+                    this._display = undefined;
                     return undefined;
 
                 }
@@ -143,8 +156,11 @@ class RemoteDraw {
                     displayId = Number(idArr[0]);
                 }
 
+                this._display = displays.find(display => display.id === displayId);
+
                 return displays.find(display => display.id === displayId);
             } else {
+                this._display = undefined;
                 return undefined;
             }
         }
@@ -170,12 +186,12 @@ class RemoteDraw {
      */
     _onScreenSharingEvent(event, { data }) {
         switch (data.name) {
-        // case SCREEN_SHARE_EVENTS.CLOSE_TRACKER:
-        //     if (this._screenShareDrawer) {
-        //         this._screenShareDrawer.close();
-        //         this._screenShareDrawer = undefined;
-        //     }
-        //     break;
+        case SCREEN_SHARE_EVENTS.CLOSE_TRACKER:
+            if (this._screenShareDrawer) {
+                this._screenShareDrawer.close();
+                this._screenShareDrawer = undefined;
+            }
+            break;
         case SCREEN_SHARE_EVENTS.STOP_SCREEN_SHARE:
             // this._jitsiMeetWindow.webContents.send(SCREEN_SHARE_EVENTS_CHANNEL, { data });
             if (this._screenShareDrawer) {
@@ -208,10 +224,10 @@ class RemoteDraw {
 
 
         this._screenShareDrawer = new BrowserWindow({
-            width: display.size.width,
-            height: display.size.height,
-            x: display.workArea.x,
-            y: display.workArea.y,
+            width: this._display.size.width,
+            height: this._display.size.height,
+            x: this._display.workArea.x,
+            y: this._display.workArea.y,
             transparent: true,
             frame: false,
             fullscreen: true,
