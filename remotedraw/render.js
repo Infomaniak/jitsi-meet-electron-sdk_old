@@ -28,8 +28,11 @@ class RemoteDraw {
      *
      * @param {HTMLElement} iframe the Jitsi Meet iframe.
      */
-    constructor(iframe) {
-        this._iframe = iframe;
+    constructor(api) {
+        // this._iframe = iframe;
+        this._api = api;
+        this._iframe = this._api.getIFrame();
+
         this._iframe.addEventListener('load', () => this._onIFrameLoad());
 
         /**
@@ -98,7 +101,8 @@ class RemoteDraw {
             response.result = true;
             ipcRenderer.send(constants.SCREEN_SHARE_DRAW_EVENTS_CHANNEL, {
                 data: {
-                    name: 'start'
+                    name: 'start',
+                    display: this._display
                 },
             });
         } else {
@@ -144,6 +148,35 @@ class RemoteDraw {
             });
             this._sendEvent({ type: EVENTS.supported });
         });
+
+        // ipcRenderer.on(SCREEN_SHARE_EVENTS_CHANNEL, (event) => {
+        //     console.log(event);
+        //     this._sendMessage(event.data);
+        // });
+
+        this._api.on('screenSharingStatusChanged', this._onScreenSharingStatusChanged);
+    }
+
+    /**
+     * React to screen sharing events coming from the jitsi meet api. There should be
+     * a {@link ScreenShareMainHook} listening on the main process for the forwarded events.
+     *
+     * @param {Object} event
+     *
+     * @returns {void}
+     */
+    _onScreenSharingStatusChanged(event) {
+        if (event.on) {
+            this._isScreenSharing = true;
+        } else {
+            this._isScreenSharing = false;
+
+            ipcRenderer.send(constants.SCREEN_SHARE_DRAW_EVENTS_CHANNEL, {
+                data: {
+                    name: EVENTS.stop
+                }
+            });
+        }
     }
 
     /**

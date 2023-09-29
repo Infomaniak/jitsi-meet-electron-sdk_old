@@ -13,7 +13,8 @@ const { SCREEN_SHARE_EVENTS_CHANNEL } = require('../screensharing/constants');
 const {
     DISPLAY_METRICS_CHANGED, GET_DISPLAY_EVENT,
     SCREEN_SHARE_DRAW_EVENTS_CHANNEL,
-    REQUESTS
+    REQUESTS,
+    EVENTS
 } = require('./constants');
 const { windowsEnableScreenProtection } = require('../helpers/functions');
 
@@ -31,6 +32,7 @@ class RemoteDraw {
 
         this._handleDisplayMetricsChanged = this._handleDisplayMetricsChanged.bind(this);
         this._handleGetDisplayEvent = this._handleGetDisplayEvent.bind(this);
+        this._createScreenDraw = this._createScreenDraw.bind(this);
 
         ipcMain.on(GET_DISPLAY_EVENT, this._handleGetDisplayEvent);
 
@@ -39,7 +41,7 @@ class RemoteDraw {
         });
 
         ipcMain.on(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, this._onDrawEvent);
-        ipcMain.on(SCREEN_SHARE_EVENTS_CHANNEL, this._onScreenSharingEvent);
+        // ipcMain.on(SCREEN_SHARE_EVENTS_CHANNEL, this._onScreenSharingEvent);
 
         this._jitsiMeetWindow.on('closed', this.cleanup);
     }
@@ -79,102 +81,96 @@ class RemoteDraw {
      * @param {string} sourceId - The source id of the desktop sharing stream.
      * @returns {Object} bounds and scaleFactor of display matching sourceId.
      */
-    _getDisplay(sourceId) {
+     /**
+     * Returns the display metrics(x, y, width, height, scaleFactor, etc...) of the display that will be used for the
+     * remote control.
+     *
+     * @param {string} sourceId - The source id of the desktop sharing stream.
+     * @returns {Object} bounds and scaleFactor of display matching sourceId.
+     */
+     _getDisplay(sourceId) {
         const displays = screen.getAllDisplays();
 
-        switch (displays.length) {
-        case 0:
-            this._display = undefined;
-            return undefined;
-        case 1:
-            // On Linux probably we'll end up here even if there are
-            // multiple monitors.
-            this._display = displays[0];
-            return displays[0];
+        switch(displays.length) {
+            case 0:
+                return undefined;
+            case 1:
+                // On Linux probably we'll end up here even if there are
+                // multiple monitors.
+                return displays[0];
             // eslint-disable-next-line no-case-declarations
-        default: { // > 1 display
-            // Remove the type part from the sourceId
-            const parsedSourceId = sourceId.replace('screen:', '');
+            default: { // > 1 display
+                // Remove the type part from the sourceId
+                const parsedSourceId = sourceId.replace('screen:', '');
 
-            // Currently native code sourceId2Coordinates is only necessary for windows.
-            if (process.platform === 'win32') {
-                const sourceId2Coordinates = require('../node_addons/sourceId2Coordinates');
-                const coordinates = sourceId2Coordinates(parsedSourceId);
-
-                if (coordinates) {
-                    const { x, y } = coordinates;
-                    const display
+                // Currently native code sourceId2Coordinates is only necessary for windows.
+                if (process.platform === 'win32') {
+                    const sourceId2Coordinates = require("../node_addons/sourceId2Coordinates");
+                    const coordinates = sourceId2Coordinates(parsedSourceId);
+                    if(coordinates) {
+                        const { x, y } = coordinates;
+                        const display
                             = screen.getDisplayNearestPoint({
                                 x: x + 1,
                                 y: y + 1
                             });
 
-                    if (typeof display !== 'undefined') {
-                        // We need to use x and y returned from sourceId2Coordinates because the ones returned from
-                        // Electron don't seem to respect the scale factors of the other displays.
-                        const { width, height } = display.bounds;
+                        if (typeof display !== 'undefined') {
+                            // We need to use x and y returned from sourceId2Coordinates because the ones returned from
+                            // Electron don't seem to respect the scale factors of the other displays.
+                            const { width, height } = display.bounds;
 
-                        this._display = {
-                            bounds: {
-                                x,
-                                y,
-                                width,
-                                height
-                            },
-                            scaleFactor: display.scaleFactor
-                        };
-
-                        return {
-                            bounds: {
-                                x,
-                                y,
-                                width,
-                                height
-                            },
-                            scaleFactor: display.scaleFactor
-                        };
+                            return {
+                                bounds: {
+                                    x,
+                                    y,
+                                    width,
+                                    height
+                                },
+                                scaleFactor: display.scaleFactor
+                            };
+                        } else {
+                            return undefined;
+                        }
                     }
+                } else if (process.platform === 'darwin') {
+                    // On Mac OS the sourceId = 'screen' + displayId.
+                    // Try to match displayId with sourceId.
+                    let displayId = Number(parsedSourceId);
 
-                    this._display = undefined;
+                    if (isNaN(displayId)) {
+                        // The source id may have the following format "desktop_id:0".
+
+                        const idArr = parsedSourceId.split(":");
+
+                        if (idArr.length <= 1) {
+                            return;
+                        }
+
+                        displayId = Number(idArr[0]);
+                    }
+                    return displays.find(display => display.id === displayId);
+                } else {
                     return undefined;
-
                 }
-            } else if (process.platform === 'darwin') {
-                // On Mac OS the sourceId = 'screen' + displayId.
-                // Try to match displayId with sourceId.
-                let displayId = Number(parsedSourceId);
-
-                if (isNaN(displayId)) {
-                    // The source id may have the following format "desktop_id:0".
-
-                    const idArr = parsedSourceId.split(':');
-
-                    if (idArr.length <= 1) {
-                        return;
-                    }
-
-                    displayId = Number(idArr[0]);
-                }
-
-                this._display = displays.find(display => display.id === displayId);
-
-                return displays.find(display => display.id === displayId);
-            } else {
-                this._display = undefined;
-                return undefined;
             }
-        }
         }
     }
 
-    _onDrawEvent(event, { data }) {
+    _onDrawEvent(event, datas) {
+        const { data } = datas;
         switch (data.name) {
             case REQUESTS.start: {
+                this._display = data.display;
                 this._createScreenDraw();
                 break;
             }
+            case EVENTS.stop: {
+                this._stop();
+                break;
+            }
             default:
-                console.warn(`Unhandled ${SCREEN_SHARE_DRAW_EVENTS_CHANNEL}: ${data}`);
+                this._screenShareDrawer.webContents.send(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, datas);
         }
     }
 
@@ -193,7 +189,6 @@ class RemoteDraw {
             }
             break;
         case SCREEN_SHARE_EVENTS.STOP_SCREEN_SHARE:
-            // this._jitsiMeetWindow.webContents.send(SCREEN_SHARE_EVENTS_CHANNEL, { data });
             if (this._screenShareDrawer) {
                 this._screenShareDrawer.close();
                 this._screenShareDrawer = undefined;
@@ -201,6 +196,14 @@ class RemoteDraw {
             break;
         default:
             console.warn(`Unhandled ${SCREEN_SHARE_EVENTS_CHANNEL}: ${data}`);
+        }
+    }
+
+    _stop() {
+        if (this._screenShareDrawer) {
+            this._screenShareDrawer.webContents.close();
+            this._screenShareDrawer.close();
+            this._screenShareDrawer = undefined;
         }
     }
 
@@ -219,8 +222,6 @@ class RemoteDraw {
         // if (process.platform === 'win32' && !systemPreferences.isAeroGlassEnabled()) {
         //     return;
         // }
-
-        const display = screen.getPrimaryDisplay();
 
 
         this._screenShareDrawer = new BrowserWindow({
@@ -264,7 +265,7 @@ class RemoteDraw {
             // skipTaskbar: false,
             webPreferences: {
                 contextIsolation: false,
-                nodeIntegration: false,
+                nodeIntegration: true,
                 preload: path.resolve(__dirname, './preload.js'),
                 sandbox: false
             }
@@ -299,13 +300,18 @@ class RemoteDraw {
         this._screenShareDrawer.loadURL(`file://${__dirname}/remoteDraw.html`);
 
 
-        ipcMain.on(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, (event, datas) => {
-            try {
-                this._screenShareDrawer.webContents.send(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, datas, display);
-            } catch (e) {
-                console.warn(e);
-            }
-        });
+        // ipcMain.on(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, (event, datas) => {
+        //     if (datas.data.name === 'stop') {
+        //         this._stop();
+
+        //         return;
+        //     }
+        //     try {
+        //         this._screenShareDrawer.webContents.send(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, datas);
+        //     } catch (e) {
+        //         console.warn(e);
+        //     }
+        // });
     }
 }
 
