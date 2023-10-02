@@ -225,10 +225,10 @@ class RemoteDraw {
 
 
         this._screenShareDrawer = new BrowserWindow({
-            width: this._display.size.width,
-            height: this._display.size.height,
-            x: this._display.workArea.x,
-            y: this._display.workArea.y,
+            width: this._display.size?.width || this._display.width,
+            height: this._display.size?.height || this._display.height,
+            x: this._display.workArea?.x || this._display.x,
+            y: this._display.workArea?.y || this._display.y,
             transparent: true,
             frame: false,
             fullscreen: true,
