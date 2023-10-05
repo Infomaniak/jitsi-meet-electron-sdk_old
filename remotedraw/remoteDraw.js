@@ -108,7 +108,7 @@ function draw(id, strokeOptions = {}, gco = "source-over", coords = undefined) {
 
 function onMouseMove(destX, destY, color, id, display) {
   draws[id].color = color;
-  // destY = destY - display.workArea.y;
+  destY = destY - display.workArea.y;
   if (draws[id].drawing) {
     draws[id].path.lineTo(destX, destY);
 
@@ -173,7 +173,7 @@ window.JitsiRemoteDraw.ipc.on(
         draws[data.participantId].path = new Path2D();
         draws[data.participantId].path.moveTo(
           data.destX,
-          data.destY
+          data.destY - display.workArea.y
         );
 
         break;

@@ -170,7 +170,9 @@ class RemoteDraw {
                 break;
             }
             default:
-                this._screenShareDrawer.webContents.send(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, datas);
+                if (this._screenShareDrawer) {
+                    this._screenShareDrawer.webContents.send(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, datas);
+                }
         }
     }
 
@@ -222,16 +224,19 @@ class RemoteDraw {
         // if (process.platform === 'win32' && !systemPreferences.isAeroGlassEnabled()) {
         //     return;
         // }
-
+        const width = this._display.size ? this._display.size.width : this._display.width;
+        const height = this._display.size ? this._display.size.height : this._display.height;
+        const x = this._display.workArea ? this._display.workArea.x : this._display.x;
+        const y = this._display.workArea ? this._display.workArea.y : this._display.y;
 
         this._screenShareDrawer = new BrowserWindow({
-            width: this._display.size?.width || this._display.width,
-            height: this._display.size?.height || this._display.height,
-            x: this._display.workArea?.x || this._display.x,
-            y: this._display.workArea?.y || this._display.y,
+            width,
+            height,
+            x,
+            y,
             transparent: true,
             frame: false,
-            fullscreen: true,
+            fullscreen: false,
             simpleFullscreen: true,
             fullscreenable: true,
             enableLargerThanScreen: true,
@@ -245,7 +250,6 @@ class RemoteDraw {
             closable: false,
             focusable: false,
             skipTaskbar: true,
-
             // FOR TESTING
             // transparent: false,
             // frame: true,
