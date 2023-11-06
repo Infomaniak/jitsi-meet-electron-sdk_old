@@ -27,7 +27,7 @@ class RemoteDraw {
 
         this.cleanup = this.cleanup.bind(this);
 
-        this._onScreenSharingEvent = this._onScreenSharingEvent.bind(this);
+        // this._onScreenSharingEvent = this._onScreenSharingEvent.bind(this);
         this._onDrawEvent = this._onDrawEvent.bind(this);
 
         this._handleDisplayMetricsChanged = this._handleDisplayMetricsChanged.bind(this);
@@ -51,7 +51,7 @@ class RemoteDraw {
      */
     cleanup() {
         ipcMain.removeListener(GET_DISPLAY_EVENT, this._handleGetDisplayEvent);
-        ipcMain.removeListener(SCREEN_SHARE_EVENTS_CHANNEL, this._onScreenSharingEvent);
+        // ipcMain.removeListener(SCREEN_SHARE_EVENTS_CHANNEL, this._onScreenSharingEvent);
         ipcMain.removeListener(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, this._onDrawEvent);
         screen.removeListener(DISPLAY_METRICS_CHANGED, this._handleDisplayMetricsChanged);
     }
@@ -182,28 +182,28 @@ class RemoteDraw {
      * @param {Object} event - Electron event data.
      * @param {Object} data - Channel specific data.
      */
-    _onScreenSharingEvent(event, { data }) {
-        switch (data.name) {
-        case SCREEN_SHARE_EVENTS.CLOSE_TRACKER:
-            if (this._screenShareDrawer) {
-                this._screenShareDrawer.close();
-                this._screenShareDrawer = undefined;
-            }
-            break;
-        case SCREEN_SHARE_EVENTS.STOP_SCREEN_SHARE:
-            if (this._screenShareDrawer) {
-                this._screenShareDrawer.close();
-                this._screenShareDrawer = undefined;
-            }
-            break;
-        default:
-            console.warn(`Unhandled ${SCREEN_SHARE_EVENTS_CHANNEL}: ${data}`);
-        }
-    }
+    // _onScreenSharingEvent(event, { data }) {
+    //     switch (data.name) {
+    //     case SCREEN_SHARE_EVENTS.CLOSE_TRACKER:
+    //         if (this._screenShareDrawer) {
+    //             this._screenShareDrawer.close();
+    //             this._screenShareDrawer = undefined;
+    //         }
+    //         break;
+    //     case SCREEN_SHARE_EVENTS.STOP_SCREEN_SHARE:
+    //         if (this._screenShareDrawer) {
+    //             this._screenShareDrawer.close();
+    //             this._screenShareDrawer = undefined;
+    //         }
+    //         break;
+    //     default:
+    //         console.warn(`Unhandled ${SCREEN_SHARE_EVENTS_CHANNEL}: ${data}`);
+    //     }
+    // }
 
     _stop() {
         if (this._screenShareDrawer) {
-            this._screenShareDrawer.webContents.close();
+            // this._screenShareDrawer.webContents.close();
             this._screenShareDrawer.close();
             this._screenShareDrawer = undefined;
         }
