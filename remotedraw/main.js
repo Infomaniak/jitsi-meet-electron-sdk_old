@@ -247,7 +247,7 @@ class RemoteDraw {
             movable: false,
             minimizable: false,
             maximizable: false,
-            closable: false,
+            closable: true,
             focusable: false,
             skipTaskbar: true,
             // FOR TESTING
