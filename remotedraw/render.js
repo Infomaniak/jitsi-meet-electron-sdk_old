@@ -123,6 +123,12 @@ class RemoteDraw {
             ipcRenderer.removeListener('jitsi-remotedraw-displays-changed', this._displayMetricsChangeListener);
             this._displayMetricsChangeListener = undefined;
         }
+
+        ipcRenderer.send(constants.SCREEN_SHARE_DRAW_EVENTS_CHANNEL, {
+            data: {
+                name: EVENTS.stop
+            }
+        });
     }
 
     /**
