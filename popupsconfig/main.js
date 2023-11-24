@@ -22,7 +22,10 @@ function initPopupsConfiguration(jitsiMeetWindow) {
         const configDropbox
             = popupsConfigRegistry.getConfigByName('dropbox-auth') || {};
 
-        if (testMatchPatterns(url, frameName, configDropbox.matchPatterns)) {
+        const configInfomaniak
+            = popupsConfigRegistry.getConfigByName('infomaniak-auth') || {};
+
+        if (testMatchPatterns(url, frameName, configDropbox.matchPatterns) || testMatchPatterns(url, frameName, configInfomaniak.matchPatterns)) {
             return { action: 'allow' };
         }
 

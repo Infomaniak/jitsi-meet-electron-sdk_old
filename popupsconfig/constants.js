@@ -10,6 +10,12 @@ const popupConfigs = {
             url: '^https:\\/\\/(www\\.)?dropbox\\.com\\/oauth2\\/authorize'
         },
         target: 'electron'
+    },
+    'infomaniak-auth': {
+        matchPatterns: {
+            url: '^https:\\/\\/login\\.infomaniak\\.com\\/authorize'
+        },
+        target: 'electron'
     }
 };
 
