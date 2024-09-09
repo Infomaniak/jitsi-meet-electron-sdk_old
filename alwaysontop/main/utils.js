@@ -23,7 +23,7 @@ let logger;
 /**
  * The electron-store instance to store last position of the aot window.
  */
-const store = new Store();
+const store = new Store({ name: 'kmeet' });
 
 
 /**
@@ -194,7 +194,7 @@ const getPosition = () => {
 
 /**
  * Saves window position
- * @param {BrowserWindow} browserWindow - the aot window 
+ * @param {BrowserWindow} browserWindow - the aot window
  */
 const savePosition = aotWindow => {
     if (!windowExists(aotWindow)) {
@@ -226,8 +226,8 @@ const resetSize = () => {
 
 /**
  * Checks whether the window exists
- * @param {BrowserWindow} win 
- * @returns 
+ * @param {BrowserWindow} win
+ * @returns
  */
 const windowExists = browserWindow => {
     return browserWindow && !browserWindow.isDestroyed();
