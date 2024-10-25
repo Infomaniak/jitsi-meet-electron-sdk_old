@@ -55,8 +55,10 @@ class ScreenShareRenderHook {
                     .then((sources) => callback(sources))
                     .catch((error) => errorCallback(error));
             },
-            getScreenPermissions() {
-                return ipcRenderer.invoke('screen-share-permissions');
+            getScreenPermissions(callback, errorCallback) {
+                ipcRenderer.invoke('screen-share-permissions')
+                    .then((permission) => callback(permission))
+                    .catch((error) => errorCallback(error));
             }
         };
 
