@@ -59,6 +59,11 @@ class ScreenShareRenderHook {
                 ipcRenderer.invoke('screen-share-permissions')
                     .then((permission) => callback(permission))
                     .catch((error) => errorCallback(error));
+            },
+            openMacScreenPermissionSettings(callback, errorCallback) {
+                ipcRenderer.invoke('open-screen-permission-settings')
+                    .then(() => callback())
+                    .catch((error) => errorCallback(error));
             }
         };
 
