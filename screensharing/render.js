@@ -89,6 +89,16 @@ class ScreenShareRenderHook {
                     this._api.executeCommand('toggleShareScreen');
                 }
                 break;
+            case SCREEN_SHARE_EVENTS.OPEN_PICKER:
+                this._api._openDesktopPicker().then(r => {
+                    ipcRenderer.send(SCREEN_SHARE_EVENTS_CHANNEL, {
+                        data: {
+                            name: SCREEN_SHARE_EVENTS.DO_GDM,
+                            ...r
+                        }
+                    });
+                });
+                break;
             default:
                 console.warn(`Unhandled ${SCREEN_SHARE_EVENTS_CHANNEL}: ${data}`);
 
