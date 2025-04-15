@@ -20,8 +20,9 @@ jobs:
           - os: windows-2019
             arch: x64
             build-group: win32-x64
-    env:
-      BUILD_GROUP: ${{ matrix.build-group }}
+          - os: windows-11-arm
+            arch: arm64
+            build-group: win32-arm64
     steps:
     - uses: actions/checkout@v3
     - uses: actions/setup-node@v3
@@ -33,7 +34,7 @@ jobs:
     # - run: TESTING=true npx mocha
       shell: bash
     - name: Prebuildify
-      run: npm run prebuild-$BUILD_GROUP
+      run: npm run prebuild
       shell: bash
     - uses: actions/upload-artifact@v3
       with:
