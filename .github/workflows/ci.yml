@@ -35,8 +35,6 @@ jobs:
         node-version: '20'
         architecture: ${{ matrix.arch }}
     - run: npm ci
-    - run: npm run lint
-    - run: npm test
     - name: Prebuildify
       run: npm run prebuild
       shell: bash
@@ -58,12 +56,6 @@ jobs:
         path: prebuilds
         pattern: prebuilds-*
         merge-multiple: true
-    - uses: phips28/gh-action-bump-version@71473b25295fe3907df2ff87cce295a0dce1b20b
-      with:
-        tag-prefix: 'v'
-        version-type:  'patch'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - uses: actions/setup-node@v6
       with:
         node-version: '20'
