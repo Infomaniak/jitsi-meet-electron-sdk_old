@@ -1,6 +1,6 @@
 {
   "name": "@infomaniak/jitsi-meet-electron-sdk",
-  "version": "6.0.10-nightly.20",
+  "version": "6.0.10-nightly.21",
   "description": "Utilities for jitsi-meet-electron project",
   "main": "index.js",
   "scripts": {
@@ -43,7 +43,7 @@
     "@jitsi/robotjs": "^0.6.15",
     "electron-store": "^8.0.1",
     "node-addon-api": "^7.0.0",
-    "node-gyp-build": "4.3.0",
+    "node-gyp-build": "4.8.4",
     "postis": "^2.2.0"
   },
   "devDependencies": {
