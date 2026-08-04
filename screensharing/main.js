@@ -1,12 +1,18 @@
 /* global __dirname */
 const { exec } = require('child_process');
-const electron = require('electron');
+const {
+    BrowserWindow,
+    desktopCapturer,
+    screen,
+    systemPreferences
+} = require('electron');
 const os = require('os');
 const path = require('path');
 
-const { SCREEN_SHARE_EVENTS_CHANNEL, SCREEN_SHARE_EVENTS, SCREEN_SHARE_GET_SOURCES, TRACKER_SIZE } = require('./constants');
-const { isMac } = require('./utils');
+const { addInvokeRoute, addSendRoute, removeInvokeRoute, removeSendRoute } = require('../helpers/ipcRouter');
 const { windowsEnableScreenProtection } = require('../helpers/functions');
+const { SCREEN_SHARE_EVENTS_CHANNEL, SCREEN_SHARE_EVENTS, SCREEN_SHARE_GET_SOURCES, TRACKER_SIZE } = require('./constants');
+const { isMac, isWayland } = require('./utils');
 
 /**
  * Main process component that sets up electron specific screen sharing functionality, like screen sharing
@@ -24,40 +30,104 @@ class ScreenShareMainHook {
      */
     constructor(jitsiMeetWindow, identity, osxBundleId) {
         this._jitsiMeetWindow = jitsiMeetWindow;
+        this._webContents = jitsiMeetWindow.webContents;
         this._identity = identity;
         this._onScreenSharingEvent = this._onScreenSharingEvent.bind(this);
+        this._acceptsEventSender = this._acceptsEventSender.bind(this);
+        this._gdmRequestId = 0;
+        this._pendingGdmRequests = new Map();
+
         this.cleanup = this.cleanup.bind(this);
 
         if (osxBundleId && isMac()) {
             this._verifyScreenCapturePermissions(osxBundleId);
         }
 
+        // Handle getDisplayMedia requests.
+        jitsiMeetWindow.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
+            // On Wayland the native picker will show up and will resolve to what the user selected, so there
+            // is no need to use the Jitsi picker.
+            if (isWayland()) {
+                const options = {
+                    types: ['screen', 'window']
+                };
+
+                desktopCapturer.getSources(options).then(sources => {
+                    const source = sources[0];
+
+                    if (source) {
+                        callback({ video: source });
+                    } else {
+                        callback(null);
+                    }
+                });
+            } else {
+                // Generate unique ID for this request to handle multiple simultaneous requests
+                const requestId = ++this._gdmRequestId;
+
+                this._pendingGdmRequests.set(requestId, {
+                    request,
+                    callback
+                });
+
+                const ev = {
+                    data: {
+                        name: SCREEN_SHARE_EVENTS.OPEN_PICKER,
+                        requestId
+                    }
+                };
+
+                this._jitsiMeetWindow.webContents.send(SCREEN_SHARE_EVENTS_CHANNEL, ev);
+            }
+        }, { useSystemPicker: false /* TODO: enable this when not experimental. It's macOS >= 15 only for now. */ }
+        );
+
         // Listen for events coming in from the main render window and the screen share tracker window.
-        electron.ipcMain.on(SCREEN_SHARE_EVENTS_CHANNEL, this._onScreenSharingEvent);
-        electron.ipcMain.handle(SCREEN_SHARE_GET_SOURCES, this._onGetSourcesInvoke);
+        addSendRoute(SCREEN_SHARE_EVENTS_CHANNEL, {
+            owner: this._webContents,
+            accepts: this._acceptsEventSender,
+            handler: this._onScreenSharingEvent
+        });
+
+        // getSources may only be requested by this window's renderer.
+        addInvokeRoute(SCREEN_SHARE_GET_SOURCES, {
+            owner: this._webContents,
+            handler: (_event, opts) => desktopCapturer.getSources(opts)
+        });
 
         // Clean up ipcMain handlers to avoid leaks.
         this._jitsiMeetWindow.on('closed', this.cleanup);
     }
 
     /**
-     * Cleanup any handlers
+     * Decides whether an incoming screen sharing event belongs to this hook.
+     * Events legitimately arrive from the meeting window's renderer and from the
+     * always-on-top tracker window this hook creates; everything else is
+     * rejected.
+     *
+     * @param {Electron.WebContents} sender - The event sender.
+     * @returns {boolean} True when the sender is trusted.
      */
-    cleanup() {
-        electron.ipcMain.removeListener(SCREEN_SHARE_EVENTS_CHANNEL, this._onScreenSharingEvent);
-        electron.ipcMain.removeHandler(SCREEN_SHARE_GET_SOURCES);
+    _acceptsEventSender(sender) {
+        return sender === this._webContents
+            || Boolean(this._screenShareTracker
+                && !this._screenShareTracker.isDestroyed()
+                && sender === this._screenShareTracker.webContents);
     }
 
     /**
-     * Returns the desktopCapturer sources according to
-     * https://www.electronjs.org/docs/latest/breaking-changes#removed-desktopcapturergetsources-in-the-renderer
-     *
-     * @param {Object} _event - Electron event data, unused
-     * @param {Object} opts - parameters for desktopCapturer.getSources()
-     * @returns {Promise<DesktopCapturerSource[]>} The return value of desktopCapturer.getSources()
+     * Cleanup any handlers
      */
-    _onGetSourcesInvoke(_event, opts) {
-        return electron.desktopCapturer.getSources(opts);
+    cleanup() {
+        // Reject all pending getDisplayMedia requests
+        this._pendingGdmRequests.forEach((gdmData, requestId) => {
+            console.warn(`[screensharing] Cleaning up pending request ${requestId}`);
+            gdmData.callback(null);
+        });
+        this._pendingGdmRequests.clear();
+
+        removeSendRoute(SCREEN_SHARE_EVENTS_CHANNEL, this._webContents);
+        removeInvokeRoute(SCREEN_SHARE_GET_SOURCES, this._webContents);
     }
 
     /**
@@ -85,6 +155,37 @@ class ScreenShareMainHook {
             case SCREEN_SHARE_EVENTS.STOP_SCREEN_SHARE:
                 this._jitsiMeetWindow.webContents.send(SCREEN_SHARE_EVENTS_CHANNEL, { data });
                 break;
+            case SCREEN_SHARE_EVENTS.DO_GDM: {
+                const { requestId } = data;
+
+                if (!requestId || !this._pendingGdmRequests.has(requestId)) {
+                    console.warn(`[screensharing] DO_GDM received for unknown/expired requestId: ${requestId}`);
+                    break;
+                }
+
+                const { callback } = this._pendingGdmRequests.get(requestId);
+                this._pendingGdmRequests.delete(requestId);
+
+                if (!data.source) {
+                    callback(null);
+                    break;
+                }
+
+                const constraints = {
+                    video: data.source
+                };
+
+                // Setting `audio` to `undefined` throws an exception.
+                if (data.screenShareAudio) {
+                    // TODO: maybe make this configurable somehow in case
+                    // someone wants to use `loopbackWithMute`?
+                    constraints.audio = 'loopback';
+                }
+
+                callback(constraints);
+
+                break;
+            }
             default:
                 console.warn(`Unhandled ${SCREEN_SHARE_EVENTS_CHANNEL}: ${data}`);
         }
@@ -102,9 +203,9 @@ class ScreenShareMainHook {
         }
 
         // Display always on top screen sharing tracker window in the center bottom of the screen.
-        const display = electron.screen.getPrimaryDisplay();
+        const display = screen.getPrimaryDisplay();
 
-        this._screenShareTracker = new electron.BrowserWindow({
+        this._screenShareTracker = new BrowserWindow({
             height: TRACKER_SIZE.height,
             width: TRACKER_SIZE.width,
             x: (display.workArea.width - TRACKER_SIZE.width) / 2,
@@ -158,7 +259,7 @@ class ScreenShareMainHook {
      * @param {string} bundleId- OSX Application BundleId
      */
     _verifyScreenCapturePermissions(bundleId) {
-        const hasPermission = electron.systemPreferences.getMediaAccessStatus('screen') === 'granted';
+        const hasPermission = systemPreferences.getMediaAccessStatus('screen') === 'granted';
         if (!hasPermission) {
             exec('tccutil reset ScreenCapture ' + bundleId);
         }

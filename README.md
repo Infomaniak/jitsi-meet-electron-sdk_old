@@ -2,7 +2,15 @@
 
 SDK for integrating Jitsi Meet into Electron applications.
 
-Supported Electron versions: >= 16.
+The SDK is built for `contextIsolation: true` (and, where possible, `sandbox: true`)
+on the window that hosts Jitsi Meet, following Electron's security guidelines. Native
+code that used to run in the renderer (remote control via robotjs) now runs only in the
+main process, and every renderer ↔ main message goes through a single, validated
+`contextBridge` surface.
+
+> **Upgrading from v9?** The single `require('@jitsi/electron-sdk')` entry has been
+> removed and replaced by three context-specific entry points. See
+> [Migrating from v9](#migrating-from-v9).
 
 ## Installation
 
@@ -10,152 +18,312 @@ Install from npm:
 
     npm install @jitsi/electron-sdk
 
-Note: This package contains native code on Windows for the remote control module. Binary prebuilds are packaged with prebuildify as part of the npm package.
+Note: This package contains native code on Windows for the remote control module. Binary
+prebuilds are packaged with prebuildify as part of the npm package. `@jitsi/robotjs` is a
+dependency but is only ever loaded in the main process.
 
-## Usage
-#### Remote Control
+## Architecture
 
-**Requirements**:
-The remote control utility requires iframe HTML Element that will load Jitsi Meet.
+The SDK ships three entry points, each named after the Electron context its code runs in.
+There is **no default (`.`) entry** — importing `@jitsi/electron-sdk` directly fails with a
+module-resolution error by design.
 
-**Enable the remote control:**
+| Entry point | Runs in | Exposes |
+| --- | --- | --- |
+| `@jitsi/electron-sdk/main` | Electron **main process** | `setupRemoteControlMain`, `setupScreenSharingMain`, `setupPowerMonitorMain`, `cleanupPowerMonitorMain`, `setupPictureInPictureMain`, `initPopupsConfigurationMain`, `getPopupTarget`, `popupsConfigRegistry` |
+| `@jitsi/electron-sdk/preload` | app **preload** script | `install()` — exposes the SDK bridge on the main world via `contextBridge` |
+| `@jitsi/electron-sdk/renderer` | the **page** ("main world") | `setupRemoteControlRender`, `setupScreenSharingRender`, `setupPowerMonitorRender`, `setupPictureInPictureRender`, `initPopupsConfigurationRender` |
 
-In the **render** electron process of the window where Jitsi Meet is displayed:
-
-```Javascript
-const {
-    RemoteControl
-} = require("@jitsi/electron-sdk");
-
-// iframe - the Jitsi Meet iframe
-const remoteControl = new RemoteControl(iframe);
+```
+╔═ renderer process ═══════════════════════════════════════════════╗
+║  page / "main world"  →  @jitsi/electron-sdk/renderer             ║
+║    owns api.* events + postis; no electron/node/native requires   ║
+║                     │  window.jitsiElectronSDK (validated bridge) ║
+║  preload / isolated  →  @jitsi/electron-sdk/preload               ║
+║    thin ipcRenderer wrappers, per-feature, payload-validated      ║
+╚═════════════════════│═════════════════════════════════════════════╝
+                      │  IPC — namespaced, sender-validated channels
+┌═ main process ══════┴═════════════════════════════════════════════┐
+│  @jitsi/electron-sdk/main  →  setup*Main (+ robotjs execution)     │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
-To disable the remote control:
+### The bridge (`window.jitsiElectronSDK`)
+
+The preload entry exposes one namespaced object to the page. Renderer code never touches
+`ipcRenderer` directly — it talks to the main process only through this surface. Only
+cloneable data crosses the bridge; callbacks are supported as subscriptions that return an
+unsubscribe function. Every bridge-backed `setup*Render` reads its fragment off
+`window.jitsiElectronSDK`, so the preload must be installed — and the window created with
+context isolation — before they are called. (`initPopupsConfigurationRender` is the one
+exception: it is a no-op and does not use the bridge.)
+
+## Setup
+
+### 1. Window configuration
+
+Create the window that hosts Jitsi Meet with context isolation on and a preload that
+installs the bridge:
+
+```Javascript
+const jitsiMeetWindow = new BrowserWindow({
+    webPreferences: {
+        contextIsolation: true,
+        sandbox: true, // robotjs no longer runs in the renderer, so the page can be sandboxed
+        preload: '/absolute/path/to/your/bundled/preload.js'
+    }
+});
+```
+
+### 2. Preload script
+
+A sandboxed preload cannot `require` from `node_modules`, so the app's preload must be
+bundled (esbuild, webpack, etc.). Call `install()` from it to expose the bridge:
+
+```Javascript
+// app preload (bundled)
+import { install } from '@jitsi/electron-sdk/preload';
+
+install();
+```
+
+`install()` puts the bridge on the main world under an SDK-internal key that the
+`/renderer` helpers read for you — your code never names it. Call it once, from a preload
+running with `contextIsolation` enabled.
+
+### 3. Main process
+
+Set up the main-process components **before** the renderer components, and clean handlers
+up on window close to prevent leaks:
+
+```Javascript
+const { setupScreenSharingMain } = require('@jitsi/electron-sdk/main');
+
+setupScreenSharingMain(jitsiMeetWindow, appName, osxBundleId);
+```
+
+### 4. Renderer
+
+Bundle the renderer entry into the app's page code and call the `setup*Render` helpers with
+the live `JitsiMeetExternalAPI` instance:
+
+```Javascript
+import { setupScreenSharingRender } from '@jitsi/electron-sdk/renderer';
+
+// api - the JitsiMeetExternalAPI instance created by the page.
+setupScreenSharingRender(api);
+```
+
+## Usage
+
+The `setup*` function names and signatures are unchanged from v9 — only the entry point you
+import them from has changed.
+
+### Remote Control
+
+Enables remote desktop control during a Jitsi Meet session. Mouse/keyboard events are
+forwarded over the bridge and executed in the main process by robotjs; the renderer never
+loads a native module.
+
+**Requirements**:
+1. Jitsi Meet must be initialized through the [iframe API](https://github.com/jitsi/jitsi-meet/blob/master/doc/api.md).
+2. `setupRemoteControlRender` requires the Jitsi Meet iframe API object.
+
+In the **main** process:
+
+```Javascript
+const { setupRemoteControlMain } = require('@jitsi/electron-sdk/main');
+
+// jitsiMeetWindow - the BrowserWindow where Jitsi Meet is loaded.
+setupRemoteControlMain(jitsiMeetWindow);
+```
+
+**User consent**: every session start is gated on an explicit confirmation collected in the
+main process, because the start request reaches the renderer as an iframe → top-frame
+`postMessage` and therefore carries no trustworthy identity. By default a native, modal
+message box parented to `jitsiMeetWindow` is shown; web content can neither render, click nor
+dismiss it. Pass `requestConsent` to provide your own wording (for instance a localized
+dialog); it receives `{ sourceId }` and must resolve to `true` only when the user explicitly
+allowed the session. Whatever you supply must not be renderable or dismissable by web
+content — a prompt inside the meeting page is not a consent gate.
+
+```Javascript
+setupRemoteControlMain(jitsiMeetWindow, {
+    async requestConsent({ sourceId }) { // eslint-disable-line no-unused-vars
+        const { response } = await dialog.showMessageBox(jitsiMeetWindow, {
+            type: 'warning',
+            buttons: [ t('remoteControl.deny'), t('remoteControl.allow') ],
+            defaultId: 0,
+            cancelId: 0,
+            message: t('remoteControl.message'),
+            detail: t('remoteControl.detail')
+        });
+
+        return response === 1;
+    }
+});
+```
+
+Passing `requestConsent: false` disables the gate: every requested session starts, with no
+prompt and no interaction.
+
+```Javascript
+// Starts remote control sessions unconditionally. Read the warning below first.
+setupRemoteControlMain(jitsiMeetWindow, { requestConsent: false });
+```
+
+> [!WARNING]
+> Only do this when you can guarantee that a start request cannot originate from untrusted
+> web content — a kiosk or support appliance that loads one deployment you control, and that
+> has already obtained consent out of band.
+
+In the **renderer** (page hosting Jitsi Meet):
+
+```Javascript
+import { setupRemoteControlRender } from '@jitsi/electron-sdk/renderer';
+
+// api - the Jitsi Meet iframe api object.
+const remoteControl = setupRemoteControlRender(api);
+```
+
+To disable remote control:
+
 ```Javascript
 remoteControl.dispose();
 ```
 
-NOTE: `dispose` method will be called automatically when the Jitsi Meet iframe unload.
+NOTE: `dispose` is called automatically on the Jitsi Meet API `readyToClose` event or when
+the iframe API's own `dispose` method runs.
 
-In the **main** electron process:
+### Screen Sharing
+
+Custom screen/window picker plus an always-on-top "X is sharing your screen" tracker window.
+
+In the **main** process:
 
 ```Javascript
-const {
-    RemoteControlMain
-} = require("@jitsi/electron-sdk");
+const { setupScreenSharingMain } = require('@jitsi/electron-sdk/main');
 
-// jitsiMeetWindow - The BrowserWindow instance of the window where Jitsi Meet is loaded.
-const remoteControl = new RemoteControlMain(mainWindow);
+// jitsiMeetWindow - the BrowserWindow where Jitsi Meet is loaded.
+// appName     - shown in the tracker window: "{appName} is sharing your screen".
+// osxBundleId - macOS bundle id; screen-capture permissions are reset if the user denied them.
+setupScreenSharingMain(jitsiMeetWindow, appName, osxBundleId);
 ```
 
-#### Screen Sharing
+In the **renderer**:
+
+```Javascript
+import { setupScreenSharingRender } from '@jitsi/electron-sdk/renderer';
+
+// api             - the Jitsi Meet iframe api object.
+// loggerTransports - optional array of @jitsi/logger transports.
+setupScreenSharingRender(api, loggerTransports);
+```
+
+### Picture in Picture
+
+Enables the browser's native picture-in-picture for the active speaker video, so users can
+keep it in a floating window while using other applications.
 
 **Requirements**:
-The screen sharing utility requires iframe HTML Element that will load Jitsi Meet.
+1. Jitsi Meet must be initialized through the [iframe API](https://github.com/jitsi/jitsi-meet/blob/master/doc/api.md).
+2. The main process executes the PiP request with userGesture privileges to bypass browser
+   transient-activation restrictions.
 
-**Enable the screen sharing:**
-
-In the **render** electron process of the window where Jitsi Meet is displayed:
-
-```Javascript
-const {
-    setupScreenSharingRender
-} = require("@jitsi/electron-sdk");
-
-// api - The Jitsi Meet iframe api object.
-setupScreenSharingRender(api);
-```
-In the **main** electron process:
+In the **main** process:
 
 ```Javascript
-const {
-    setupScreenSharingMain
-} = require("@jitsi/electron-sdk");
+const { setupPictureInPictureMain } = require('@jitsi/electron-sdk/main');
 
-// jitsiMeetWindow - The BrowserWindow instance of the window where Jitsi Meet is loaded.
-// appName - Application name which will be displayed inside the content sharing tracking window
-// i.e. [appName] is sharing your screen.
-// osxBundleId - Mac Application bundleId for which screen capturer permissions will be reset if user denied them.  
-setupScreenSharingMain(mainWindow, appName, osxBundleId);
+// jitsiMeetWindow  - the BrowserWindow where Jitsi Meet is loaded.
+// loggerTransports - optional array of @jitsi/logger transports.
+const pipMain = setupPictureInPictureMain(jitsiMeetWindow, loggerTransports);
 ```
 
+In the **renderer**:
 
-#### Always On Top
-Displays a small window with the current active speaker video when the main Jitsi Meet window is not focused.
-
-**Requirements**:
-1. Jitsi Meet should be initialized through our [iframe API](https://github.com/jitsi/jitsi-meet/blob/master/doc/api.md)
-2. The `BrowserWindow` instance where Jitsi Meet is displayed should use the [Chrome's window.open implementation](https://github.com/electron/electron/blob/master/docs/api/window-open.md#using-chromes-windowopen-implementation) (set `nativeWindowOpen` option of `BrowserWindow`'s constructor to `true`).
-3. If you have a custom handler for opening windows you have to filter the always on top window. You can do this by its `frameName` argument which will be set to `AlwaysOnTop`.
-
-**Enable the aways on top:**
-
-In the **main** electron process:
 ```Javascript
-const {
-    setupAlwaysOnTopMain
-} = require("@jitsi/electron-sdk");
+import { setupPictureInPictureRender } from '@jitsi/electron-sdk/renderer';
 
-// jitsiMeetWindow - The BrowserWindow instance
-// of the window where Jitsi Meet is loaded.
-setupAlwaysOnTopMain(jitsiMeetWindow);
+// api              - the JitsiMeetExternalAPI instance.
+// loggerTransports - optional array of @jitsi/logger transports.
+const pipRender = setupPictureInPictureRender(api, loggerTransports);
 ```
 
-In the **render** electron process of the window where Jitsi Meet is displayed:
+### Power Monitor
+
+Query Electron for system idle state and receive power-monitor events (suspend, resume,
+lock, unlock).
+
+In the **main** process:
+
 ```Javascript
-const {
-    setupAlwaysOnTopRender
-} = require("@jitsi/electron-sdk");
+const { setupPowerMonitorMain, cleanupPowerMonitorMain } = require('@jitsi/electron-sdk/main');
 
-const api = new JitsiMeetExternalAPI(...);
-const alwaysOnTop = setupAlwaysOnTopRender(api);
-
-alwaysOnTop.on('will-close', handleAlwaysOnTopClose);
-```
-
-`setupAlwaysOnTopRender` return an instance of EventEmitter with the following events:
-
-* _dismissed_ - emitted when the always on top window is explicitly dismissed via its close button
-
-* _will-close_ - emitted right before the always on top window is going to close
-
-
-#### Power Monitor
-
-Provides a way to query electron for system idle and receive power monitor events.
-
-**enable power monitor:**
-In the **main** electron process:
-```Javascript
-const {
-    setupPowerMonitorMain
-} = require("@jitsi/electron-sdk");
-
-// jitsiMeetWindow - The BrowserWindow instance
-// of the window where Jitsi Meet is loaded.
+// jitsiMeetWindow - the BrowserWindow where Jitsi Meet is loaded.
 setupPowerMonitorMain(jitsiMeetWindow);
+
+// On shutdown, tear down all power-monitor hooks:
+// cleanupPowerMonitorMain();
 ```
 
-In the **render** electron process of the window where Jitsi Meet is displayed:
-```Javascript
-const {
-    setupPowerMonitorRender
-} = require("@jitsi/electron-sdk");
+In the **renderer**:
 
-const api = new JitsiMeetExternalAPI(...);
+```Javascript
+import { setupPowerMonitorRender } from '@jitsi/electron-sdk/renderer';
+
 setupPowerMonitorRender(api);
 ```
 
-### NOTE:
-You'll need to add 'disable-site-isolation-trials' switch because of [https://github.com/electron/electron/issues/18214](https://github.com/electron/electron/issues/18214):
+### Popups Configuration
+
+Configures handling of popup windows for OAuth authentication flows (Google, Dropbox). It
+sets a `setWindowOpenHandler` on the Jitsi Meet window that allows OAuth popups and delegates
+all other `window.open` requests to a handler you provide.
+
+In the **main** process:
+
+```Javascript
+const { shell } = require('electron');
+const { initPopupsConfigurationMain } = require('@jitsi/electron-sdk/main');
+
+// Called for window.open requests that are not OAuth popups.
+const windowOpenHandler = ({ url }) => {
+    shell.openExternal(url); // open external links in the default browser
+    return { action: 'deny' };
+};
+
+// jitsiMeetWindow    - the BrowserWindow where Jitsi Meet is loaded.
+// windowOpenHandler  - optional; if omitted, non-OAuth window.open requests are denied.
+initPopupsConfigurationMain(jitsiMeetWindow, windowOpenHandler);
 ```
-app.commandLine.appendSwitch('disable-site-isolation-trials')
-```
+
+`initPopupsConfigurationRender(api)` is exported from the renderer entry for API
+compatibility but is a no-op.
+
+## Migrating from v9
+
+v10 is a breaking release. The public API functions are the same; what changed is how you
+load them and how the window is configured.
+
+- **The default entry is gone.** `require('@jitsi/electron-sdk')` no longer resolves. Import
+  from `@jitsi/electron-sdk/main`, `@jitsi/electron-sdk/preload`, or
+  `@jitsi/electron-sdk/renderer` depending on where the code runs.
+- **The Jitsi Meet window must use `contextIsolation: true`.** Because robotjs left the
+  renderer, that window can also run with `sandbox: true`.
+- **Install the bridge from the preload.** The app's (bundled) preload must call
+  `install()` from `@jitsi/electron-sdk/preload`. Renderer code no longer receives
+  `ipcRenderer` and must not assign the SDK helpers onto `window` itself.
+- **Move `setup*Render` calls into the app's renderer bundle** and call them directly with
+  the `JitsiMeetExternalAPI` instance (instead of via a `window.*` object bridged from the
+  preload). The signatures are unchanged.
+
+Apps that must stay on `contextIsolation: false` can pin to `@jitsi/electron-sdk@9`.
 
 ## Example
 
-For examples of installation and usage checkout the [Jitsi Meet Electron](https://github.com/jitsi/jitsi-meet-electron) project.
+For a full integration example see the
+[Jitsi Meet Electron](https://github.com/jitsi/jitsi-meet-electron) project.
 
 ## Development
 
@@ -163,12 +331,12 @@ Enable husky to avoid accidental pushes to the main branch:
 
     npx husky install
 
-To rebuild the native code, use:
+To rebuild the native code (Windows), use:
 
     npx node-gyp rebuild
 
 ## Publishing
 
-On every push to main branch, the .github/workflows/ci.yml will create a new version and publish to npm.
-
-If a major or minor release is required, use respective key words in the commit message, see https://github.com/phips28/gh-action-bump-version#workflow
+On every push to the `master` branch, `.github/workflows/ci.yml` creates a new patch version and
+publishes to npm. For a major or minor release, manually bump the version in package.json
+[gh-action-bump-version workflow](https://github.com/phips28/gh-action-bump-version#workflow).

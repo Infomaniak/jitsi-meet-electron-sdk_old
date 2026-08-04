@@ -3,7 +3,7 @@ const { ipcRenderer } = require('electron');
 let activePopups = {};
 
 /**
- * Initializes the popup configuration module.
+ * Initializes the popup configuration module in the renderer process.
  *
  * @param {JitsiMeetExternalAPI} api - The iframe api instance.
  */

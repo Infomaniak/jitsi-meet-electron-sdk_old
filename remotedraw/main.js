@@ -8,8 +8,6 @@ const {
 const process = require('process');
 const os = require('os');
 const path = require('path');
-const { SCREEN_SHARE_EVENTS } = require('../screensharing/constants');
-const { SCREEN_SHARE_EVENTS_CHANNEL } = require('../screensharing/constants');
 const {
     DISPLAY_METRICS_CHANGED, GET_DISPLAY_EVENT,
     SCREEN_SHARE_DRAW_EVENTS_CHANNEL,
