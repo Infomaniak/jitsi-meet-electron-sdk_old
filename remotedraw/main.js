@@ -12,6 +12,7 @@ const { SCREEN_SHARE_EVENTS } = require('../screensharing/constants');
 const { SCREEN_SHARE_EVENTS_CHANNEL } = require('../screensharing/constants');
 const {
     DISPLAY_METRICS_CHANGED, GET_DISPLAY_EVENT,
+    RD_START,
     SCREEN_SHARE_DRAW_EVENTS_CHANNEL,
     REQUESTS,
     EVENTS
@@ -20,10 +21,17 @@ const { windowsEnableScreenProtection } = require('../helpers/functions');
 
 /**
  * Parses the remote draw events and executes them via robotjs.
+ *
+ * The constructor accepts an optional `options.requestConsent` callback that
+ * is invoked before a remote draw session starts. It must resolve to true
+ * only when the user explicitly allowed it. When omitted, sessions are denied
+ * by default (fail-closed).
  */
 class RemoteDraw {
-    constructor(jitsiMeetWindow) {
+    constructor(jitsiMeetWindow, options = {}) {
         this._jitsiMeetWindow = jitsiMeetWindow;
+        this._requestConsent = this._resolveRequestConsent(options.requestConsent);
+        this._consentPending = false;
 
         this.cleanup = this.cleanup.bind(this);
 
@@ -32,9 +40,11 @@ class RemoteDraw {
 
         this._handleDisplayMetricsChanged = this._handleDisplayMetricsChanged.bind(this);
         this._handleGetDisplayEvent = this._handleGetDisplayEvent.bind(this);
+        this._handleStart = this._handleStart.bind(this);
         this._createScreenDraw = this._createScreenDraw.bind(this);
 
         ipcMain.on(GET_DISPLAY_EVENT, this._handleGetDisplayEvent);
+        ipcMain.handle(RD_START, this._handleStart);
 
         app.whenReady().then(() => {
             screen.on(DISPLAY_METRICS_CHANGED, this._handleDisplayMetricsChanged);
@@ -47,13 +57,75 @@ class RemoteDraw {
     }
 
     /**
+     * Resolves the requestConsent option into the function _handleStart calls.
+     *
+     * @param {Function|boolean|undefined} requestConsent
+     * @returns {Function} The consent function.
+     */
+    _resolveRequestConsent(requestConsent) {
+        if (requestConsent === false) {
+            console.warn('[remotedraw] The user consent gate is disabled: '
+                + 'remote draw sessions will start without asking.');
+            return () => true;
+        }
+        if (typeof requestConsent === 'function') {
+            return requestConsent;
+        }
+        console.warn('[remotedraw] No requestConsent callback provided: '
+            + 'remote draw sessions will be denied by default.');
+        return () => false;
+    }
+
+    /**
      * Cleanup any handlers
      */
     cleanup() {
         ipcMain.removeListener(GET_DISPLAY_EVENT, this._handleGetDisplayEvent);
+        ipcMain.removeHandler(RD_START);
         // ipcMain.removeListener(SCREEN_SHARE_EVENTS_CHANNEL, this._onScreenSharingEvent);
         ipcMain.removeListener(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, this._onDrawEvent);
         screen.removeListener(DISPLAY_METRICS_CHANGED, this._handleDisplayMetricsChanged);
+    }
+
+    /**
+     * Handles the RD_START request: asks the user for consent, then resolves
+     * the shared display for the given sourceId.
+     *
+     * @param {IpcMainInvokeEvent} event - The electron event.
+     * @param {string} sourceId - The source id of the desktop sharing stream.
+     * @returns {Promise<Object>} `{ result: true, display }` on success, else `{ error }`.
+     */
+    async _handleStart(event, sourceId) {
+        if (this._consentPending) {
+            return { error: 'Error: a remote draw request is already pending' };
+        }
+        this._consentPending = true;
+
+        let granted;
+        try {
+            granted = await this._requestConsent({ sourceId });
+        } catch (error) {
+            console.error('[remotedraw] Error requesting consent:', error && error.message);
+            granted = false;
+        } finally {
+            this._consentPending = false;
+        }
+
+        if (!granted) {
+            return { error: 'Error: remote draw denied by the user' };
+        }
+
+        if (this._jitsiMeetWindow.isDestroyed()) {
+            return { error: 'Error: the meeting window is gone' };
+        }
+
+        const display = this._getDisplay(sourceId);
+
+        if (display) {
+            return { result: true, display };
+        }
+
+        return { error: 'Error: Can\'t detect the display that is currently shared' };
     }
 
     /**

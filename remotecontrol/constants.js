@@ -25,6 +25,15 @@ module.exports = {
     GET_DISPLAY_EVENT: 'jitsi-remotecontrol-get-display',
 
     /**
+     * IPC channel (ipcMain.handle) used to start a remote control session.
+     * The main process asks the user for consent via the requestConsent
+     * callback before resolving the display, so that a start request arriving
+     * from the iframe (an untrusted postMessage channel) cannot drive robotjs
+     * without explicit user approval.
+     */
+    RC_START: 'jitsi-remotecontrol-start',
+
+    /**
      * Key actions mapping between the values in remote control key event and
      * robotjs methods.
      */

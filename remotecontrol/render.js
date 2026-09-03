@@ -9,6 +9,7 @@ const {
     KEY_ACTIONS_FROM_EVENT_TYPE,
     MOUSE_ACTIONS_FROM_EVENT_TYPE,
     MOUSE_BUTTONS,
+    RC_START,
     REMOTE_CONTROL_MESSAGE_NAME,
     REQUESTS
 } = constants;
@@ -73,27 +74,49 @@ class RemoteControl {
     /**
      * Handles remote control start messages.
      *
+     * Asks the main process for consent before proceeding. The main process
+     * owns the consent gate because the start request arrives from the iframe
+     * via postMessage (an untrusted channel), so only the main process can
+     * collect consent that cannot be forged by web content.
+     *
      * @param {number} id - the id of the request that will be used for the
      * response.
      * @param {string} sourceId - The source id of the desktop sharing stream.
      */
-    _start(id, sourceId) {
-        this._displayMetricsChangeListener = () => {
-            this._setDisplayMetrics(sourceId);
-        };
-        ipcRenderer.on('jitsi-remotecontrol-displays-changed', this._displayMetricsChangeListener);
-        this._setDisplayMetrics(sourceId);
-
+    async _start(id, sourceId) {
         const response = {
             id,
             type: 'response'
         };
 
-        if(this._display) {
-            response.result = true;
+        let consentResult;
+        try {
+            consentResult = await ipcRenderer.invoke(RC_START, sourceId);
+        } catch (error) {
+            consentResult = { error: `Error: ${error && error.message}` };
+        }
+
+        if (consentResult && consentResult.result) {
+            this._displayMetricsChangeListener = () => {
+                this._setDisplayMetrics(sourceId);
+            };
+            ipcRenderer.on('jitsi-remotecontrol-displays-changed', this._displayMetricsChangeListener);
+
+            // Use the display resolved by the main process (it already validated
+            // consent and matched the sourceId). Fall back to a sync query for
+            // backward compatibility if the main process did not return one.
+            this._display = consentResult.display
+                || ipcRenderer.sendSync('jitsi-remotecontrol-get-display', sourceId);
+
+            if (this._display) {
+                response.result = true;
+            } else {
+                response.error
+                    = 'Error: Can\'t detect the display that is currently shared';
+            }
         } else {
-            response.error
-                = 'Error: Can\'t detect the display that is currently shared';
+            response.error = (consentResult && consentResult.error)
+                || 'Error: remote control denied by the user';
         }
 
         this._sendMessage(response);
