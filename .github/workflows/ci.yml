@@ -19,10 +19,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          # windows-latest now ships Visual Studio 18 (2026), which the
+          # node-gyp bundled with Node 20 cannot detect
+          # ("unknown version \"undefined\""); pin the VS 2022 image so the
+          # native win32 prebuilds keep building.
+          - os: windows-2022
             arch: x86
             build-group: win32-x86
-          - os: windows-latest
+          - os: windows-2022
             arch: x64
             build-group: win32-x64
           - os: windows-11-arm
