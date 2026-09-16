@@ -9,15 +9,14 @@
     "validate": "npm ls",
     "install": "node install.js",
     "node-gyp-build": "node-gyp-build",
-    "prebuild-win32-x86": "prebuildify -t 16.0.0 --napi --strip",
-    "prebuild-win32-x64": "prebuildify -t 16.0.0 --napi --strip"
+    "prebuild": "prebuildify -t 20.0.0 --strip"
   },
   "pre-commit": [
     "lint"
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/infomaniak/jitsi-meet-electron-sdk.git"
+    "url": "https://github.com/Infomaniak/desktop-kMeet-sdk.git"
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com/"
@@ -40,11 +39,11 @@
     ]
   },
   "dependencies": {
-    "@jitsi/logger": "^2.0.0",
-    "@jitsi/robotjs": "0.6.12",
+    "@jitsi/logger": "^2.0.2",
+    "@jitsi/robotjs": "^0.6.15",
     "electron-store": "^8.0.1",
     "node-addon-api": "^7.0.0",
-    "node-gyp-build": "4.3.0",
+    "node-gyp-build": "4.8.4",
     "postis": "^2.2.0"
   },
   "devDependencies": {
@@ -52,7 +51,7 @@
     "eslint-plugin-jsdoc": "*",
     "husky": "^8.0.1",
     "mocha": "^10.0.0",
-    "prebuildify": "^5.0.0",
+    "prebuildify": "^6.0.0",
     "precommit-hook": "3.0.0"
   }
 }

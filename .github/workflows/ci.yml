@@ -6,6 +6,11 @@ on:
     branches:
       - master
 
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
 jobs:
   build:
     name: Build ${{ matrix.build-group }}
@@ -14,47 +19,50 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-2019
+          # windows-latest now ships Visual Studio 18 (2026), which the
+          # node-gyp bundled with Node 20 cannot detect
+          # ("unknown version \"undefined\""); pin the VS 2022 image so the
+          # native win32 prebuilds keep building.
+          - os: windows-2022
             arch: x86
             build-group: win32-x86
-          - os: windows-2019
+          - os: windows-2022
             arch: x64
             build-group: win32-x64
-    env:
-      BUILD_GROUP: ${{ matrix.build-group }}
+          - os: windows-11-arm
+            arch: arm64
+            build-group: win32-arm64
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-node@v3
+    - uses: actions/checkout@v6
+    - uses: actions/setup-node@v6
       with:
-        node-version: '16'
+        node-version: '20'
         architecture: ${{ matrix.arch }}
     - run: npm ci
-    # - run: npm run lint
-    # - run: TESTING=true npx mocha
-      shell: bash
     - name: Prebuildify
-      run: npm run prebuild-$BUILD_GROUP
+      run: npm run prebuild
       shell: bash
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v6
       with:
-        name: prebuilds
+        name: prebuilds-${{ matrix.build-group }}
         path: prebuilds/
   publish:
     name: Publish to npm
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     needs: build
     concurrency:
       group: ${{ github.ref }}
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/download-artifact@v3
+    - uses: actions/checkout@v6
+    - uses: actions/download-artifact@v7
       with:
-        name: prebuilds
         path: prebuilds
-    - uses: actions/setup-node@v3
+        pattern: prebuilds-*
+        merge-multiple: true
+    - uses: actions/setup-node@v6
       with:
-        node-version: '16'
+        node-version: '20'
         registry-url: 'https://npm.pkg.github.com'
         scope: '@infomaniak'
     - run: npm publish --registry https://npm.pkg.github.com
