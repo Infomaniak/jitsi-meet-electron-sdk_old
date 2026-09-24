@@ -2,6 +2,7 @@
 const { ipcRenderer } = require('electron');
 
 const { SCREEN_SHARE_EVENTS_CHANNEL, SCREEN_SHARE_EVENTS, SCREEN_SHARE_GET_SOURCES } = require('./constants');
+const { isOriginAllowed } = require('./utils');
 
 /**
  * Renderer process component that sets up electron specific screen sharing functionality, like screen sharing
@@ -14,10 +15,18 @@ class ScreenShareRenderHook {
      * Creates a ScreenShareRenderHook hooked to jitsi meet iframe events.
      *
      * @param {JitsiIFrameApi} api - The Jitsi Meet iframe api object.
+     * @param {Object} options - Hook configuration.
+     * @param {string[]} options.allowedOrigins - The origins the embedding app
+     * trusts for its meeting iframe (e.g. ["https://kmeet.infomaniak.com"]).
+     * The JitsiMeetElectron helper is only exposed to pages served from these
+     * origins. When omitted, the legacy behavior applies (the helper is
+     * exposed to whatever page the iframe loads) and a warning is logged.
      */
-    constructor(api) {
+    constructor(api, options = {}) {
         this._api = api;
         this._iframe = this._api.getIFrame();
+        this._allowedOrigins = Array.isArray(options.allowedOrigins)
+            ? options.allowedOrigins : null;
 
         this._onScreenSharingStatusChanged = this._onScreenSharingStatusChanged.bind(this);
         this._sendCloseTrackerEvent = this._sendCloseTrackerEvent.bind(this);
@@ -34,6 +43,12 @@ class ScreenShareRenderHook {
      * Make sure that even after reload/redirect the screensharing will be available
      */
     _onIframeApiLoad() {
+        if (!this._isOriginTrusted()) {
+            console.warn(`[screensharing] Refusing to expose desktop capture to untrusted origin: ${this._getIframeOrigin() || 'unknown'}`);
+
+            return;
+        }
+
         this._iframe.contentWindow.JitsiMeetElectron = {
             /**
              * Get sources available for screensharing. The callback is invoked
@@ -75,6 +90,42 @@ class ScreenShareRenderHook {
         ipcRenderer.on(SCREEN_SHARE_EVENTS_CHANNEL, this._onScreenSharingEvent);
         this._api.on('screenSharingStatusChanged', this._onScreenSharingStatusChanged);
         this._api.on('videoConferenceLeft', this._sendCloseTrackerEvent);
+    }
+
+    /**
+     * Computes the origin of the page currently loaded in the meeting iframe.
+     *
+     * @returns {?string} The origin, or null when it cannot be determined.
+     */
+    _getIframeOrigin() {
+        try {
+            return new URL(this._iframe.src).origin || null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * Gates the exposure of the JitsiMeetElectron desktop capture helper on
+     * the origin of the page loaded in the meeting iframe. This is the port
+     * of the upstream v10.0.5 user-initiated share gate (commit 144080fd) to
+     * the legacy obtainDesktopStreams API: that API has no getDisplayMedia
+     * flow to correlate with, so the trust boundary is drawn at injection
+     * time instead - only pages from the origins the embedding app declared
+     * may ever see the helper, whatever page ended up in the iframe.
+     *
+     * @returns {boolean} True when the helper may be exposed.
+     */
+    _isOriginTrusted() {
+        if (this._allowedOrigins === null) {
+            // Legacy mode: the embedding app did not configure an origin
+            // list. Keep the previous behavior but make it visible.
+            console.warn('[screensharing] No allowedOrigins configured: the desktop capture helper is exposed to whatever page the iframe loads.');
+
+            return true;
+        }
+
+        return isOriginAllowed(this._getIframeOrigin(), this._allowedOrigins);
     }
 
     /**
@@ -170,7 +221,8 @@ class ScreenShareRenderHook {
  * jitsi meet iframe.
  *
  * @param {JitsiIFrameApi} api - The Jitsi Meet iframe api object.
+ * @param {Object} options - Hook configuration, see {@link ScreenShareRenderHook}.
  */
-module.exports = function setupScreenSharingRender(api) {
-    return new ScreenShareRenderHook(api);
+module.exports = function setupScreenSharingRender(api, options = {}) {
+    return new ScreenShareRenderHook(api, options);
 };

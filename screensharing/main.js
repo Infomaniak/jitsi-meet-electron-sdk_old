@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 
 const { SCREEN_SHARE_EVENTS_CHANNEL, SCREEN_SHARE_EVENTS, SCREEN_SHARE_GET_SOURCES, TRACKER_SIZE } = require('./constants');
-const { isMac } = require('./utils');
+const { isMac, sanitizeSourceOptions } = require('./utils');
 const { windowsEnableScreenProtection } = require('../helpers/functions');
 
 /**
@@ -52,12 +52,24 @@ class ScreenShareMainHook {
      * Returns the desktopCapturer sources according to
      * https://www.electronjs.org/docs/latest/breaking-changes#removed-desktopcapturergetsources-in-the-renderer
      *
-     * @param {Object} _event - Electron event data, unused
+     * Only the meeting window's renderer may request sources, and the request
+     * options are sanitized before they reach desktopCapturer: source types
+     * are filtered to screen/window and thumbnail dimensions are clamped to
+     * 320px so a page cannot inflate the captured previews. (Port of the
+     * upstream v10.0.5 hardening, commit 144080fd; the display-media gate of
+     * that commit maps to the origin gate in the renderer hook, since the old
+     * API has no getDisplayMedia flow to correlate with.)
+     *
+     * @param {Object} event - Electron event data, used to validate the sender.
      * @param {Object} opts - parameters for desktopCapturer.getSources()
      * @returns {Promise<DesktopCapturerSource[]>} The return value of desktopCapturer.getSources()
      */
-    _onGetSourcesInvoke(_event, opts) {
-        return electron.desktopCapturer.getSources(opts);
+    _onGetSourcesInvoke(event, opts) {
+        if (!event || event.sender !== this._jitsiMeetWindow.webContents) {
+            return Promise.reject(new Error('Unauthorized getSources sender'));
+        }
+
+        return electron.desktopCapturer.getSources(sanitizeSourceOptions(opts));
     }
 
     /**
