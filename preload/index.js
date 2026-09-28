@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const createPipBridge = require('../pip/bridge');
 const createPowerMonitorBridge = require('../powermonitor/bridge');
 const createRemoteControlBridge = require('../remotecontrol/bridge');
+const createRemoteDrawBridge = require('../remotedraw/bridge');
 const createScreenSharingBridge = require('../screensharing/bridge');
 
 /**
@@ -40,6 +41,7 @@ function install() {
         pip: createPipBridge(context),
         powerMonitor: createPowerMonitorBridge(context),
         remoteControl: createRemoteControlBridge(context),
+        remoteDraw: createRemoteDrawBridge(context),
         screenSharing: createScreenSharingBridge(context)
     };
 
