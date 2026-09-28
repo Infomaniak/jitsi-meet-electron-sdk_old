@@ -13,6 +13,7 @@ const constants = require('./constants');
 const {
     EVENTS,
     MOUSE_ACTIONS_FROM_EVENT_TYPE,
+    RD_START,
     REMOTE_DRAW_MESSAGE_NAME,
     REQUESTS
 } = constants;
@@ -81,33 +82,51 @@ class RemoteDraw {
     /**
      * Handles remote draw start messages.
      *
+     * Asks the main process for consent before proceeding. The main process
+     * owns the consent gate because the start request arrives from the iframe
+     * via postMessage (an untrusted channel).
+     *
      * @param {number} id - the id of the request that will be used for the
      * response.
      * @param {string} sourceId - The source id of the desktop sharing stream.
      */
-    _start(id, sourceId) {
-        this._displayMetricsChangeListener = () => {
-            this._setDisplayMetrics(sourceId);
-        };
-        ipcRenderer.on('jitsi-remotedraw-displays-changed', this._displayMetricsChangeListener);
-        this._setDisplayMetrics(sourceId);
-
+    async _start(id, sourceId) {
         const response = {
             id,
             type: 'response'
         };
 
-        if (this._display) {
-            response.result = true;
-            ipcRenderer.send(constants.SCREEN_SHARE_DRAW_EVENTS_CHANNEL, {
-                data: {
-                    name: 'start',
-                    display: this._display
-                },
-            });
+        let consentResult;
+        try {
+            consentResult = await ipcRenderer.invoke(RD_START, sourceId);
+        } catch (error) {
+            consentResult = { error: `Error: ${error && error.message}` };
+        }
+
+        if (consentResult && consentResult.result) {
+            this._displayMetricsChangeListener = () => {
+                this._setDisplayMetrics(sourceId);
+            };
+            ipcRenderer.on('jitsi-remotedraw-displays-changed', this._displayMetricsChangeListener);
+
+            this._display = consentResult.display
+                || ipcRenderer.sendSync('jitsi-remotedraw-get-display', sourceId);
+
+            if (this._display) {
+                response.result = true;
+                ipcRenderer.send(constants.SCREEN_SHARE_DRAW_EVENTS_CHANNEL, {
+                    data: {
+                        name: 'start',
+                        display: this._display
+                    },
+                });
+            } else {
+                response.error
+                    = 'Error: Can\'t detect the display that is currently shared';
+            }
         } else {
-            response.error
-                = 'Error: Can\'t detect the display that is currently shared';
+            response.error = (consentResult && consentResult.error)
+                || 'Error: remote draw denied by the user';
         }
 
         this._sendMessage(response);

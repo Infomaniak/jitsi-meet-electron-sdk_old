@@ -21,6 +21,15 @@ module.exports = {
     GET_DISPLAY_EVENT: 'jitsi-remotedraw-get-display',
 
     /**
+     * IPC channel (ipcMain.handle) used to start a remote draw session.
+     * The main process asks the user for consent via the requestConsent
+     * callback before resolving the display, so that a start request arriving
+     * from the iframe (an untrusted postMessage channel) cannot create a draw
+     * overlay without explicit user approval.
+     */
+    RD_START: 'jitsi-remotedraw-start',
+
+    /**
      * Mouse actions mapping between the values in remote draw mouse event and
      * robotjs methods.
      */
