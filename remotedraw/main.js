@@ -1,7 +1,7 @@
 /* global __dirname */
 const {
     app,
-    ipcMain,
+    dialog,
     screen,
     BrowserWindow
 } = require('electron');
@@ -9,27 +9,49 @@ const process = require('process');
 const os = require('os');
 const path = require('path');
 const {
-    DISPLAY_METRICS_CHANGED, GET_DISPLAY_EVENT,
+    DISPLAY_METRICS_CHANGED,
+    GET_DISPLAY_EVENT,
     RD_START,
     SCREEN_SHARE_DRAW_EVENTS_CHANNEL,
     REQUESTS,
     EVENTS
 } = require('./constants');
+const { addInvokeRoute, addSendRoute, removeInvokeRoute, removeSendRoute } = require('../helpers/ipcRouter');
 const { windowsEnableScreenProtection } = require('../helpers/functions');
 
 /**
- * Parses the remote draw events and executes them via robotjs.
- *
- * The constructor accepts an optional `options.requestConsent` callback that
- * is invoked before a remote draw session starts. It must resolve to true
- * only when the user explicitly allowed it. When omitted, sessions are denied
- * by default (fail-closed).
+ * Module to run on the main process. It owns the remote draw session: it
+ * asks the user for consent, resolves the shared display, hosts the
+ * transparent draw overlay window and forwards the draw marker events to it.
+ * Keeping the consent gate and the overlay in the trusted main process is
+ * what lets the Jitsi Meet window run with context isolation enabled.
  */
 class RemoteDraw {
+    /**
+     * Constructs a new instance and wires up the IPC handlers.
+     *
+     * @param {BrowserWindow} jitsiMeetWindow - the BrowserWindow object which displays the meeting.
+     * @param {Object} [options] - Optional configuration.
+     * @param {function(Object): Promise<boolean>|boolean|false} [options.requestConsent] - Asks the
+     * user whether a remote draw session may start, receiving `{ sourceId }`. It must resolve to
+     * true only when the user explicitly allowed it. Defaults to a native message box parented to
+     * `jitsiMeetWindow`. Embedders should supply this to provide their own (e.g. localized) wording,
+     * but whatever they supply MUST NOT be renderable or dismissable by web content. Pass `false` to
+     * disable the gate entirely and start every session that is requested - see
+     * {@link _resolveRequestConsent} for when that is (and is not) defensible.
+     */
     constructor(jitsiMeetWindow, options = {}) {
         this._jitsiMeetWindow = jitsiMeetWindow;
+        this._webContents = jitsiMeetWindow.webContents;
         this._requestConsent = this._resolveRequestConsent(options.requestConsent);
+
+        // Whether a consent request is currently on screen. Guards against a
+        // hostile - or merely repeating - renderer stacking up dialogs.
         this._consentPending = false;
+
+        // The display metrics of the currently shared desktop, kept so the
+        // draw overlay can be positioned on it.
+        this._display = undefined;
 
         this.cleanup = this.cleanup.bind(this);
 
@@ -41,69 +63,111 @@ class RemoteDraw {
         this._handleStart = this._handleStart.bind(this);
         this._createScreenDraw = this._createScreenDraw.bind(this);
 
-        ipcMain.on(GET_DISPLAY_EVENT, this._handleGetDisplayEvent);
-        ipcMain.handle(RD_START, this._handleStart);
+        // Route by sender so only the window this session belongs to can drive
+        // it, and so several windows can each run remote draw without the
+        // process-wide ipcMain registrations colliding.
+        addInvokeRoute(RD_START, { owner: this._webContents, handler: this._handleStart });
+        addInvokeRoute(GET_DISPLAY_EVENT, {
+            owner: this._webContents,
+            handler: this._handleGetDisplayEvent
+        });
+        addSendRoute(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, { owner: this._webContents, handler: this._onDrawEvent });
 
         app.whenReady().then(() => {
             screen.on(DISPLAY_METRICS_CHANGED, this._handleDisplayMetricsChanged);
         });
 
-        ipcMain.on(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, this._onDrawEvent);
-        // ipcMain.on(SCREEN_SHARE_EVENTS_CHANNEL, this._onScreenSharingEvent);
-
+        // Clean up handlers to avoid leaks.
         this._jitsiMeetWindow.on('closed', this.cleanup);
     }
 
     /**
-     * Resolves the requestConsent option into the function _handleStart calls.
-     *
-     * @param {Function|boolean|undefined} requestConsent
-     * @returns {Function} The consent function.
-     */
-    _resolveRequestConsent(requestConsent) {
-        if (requestConsent === false) {
-            console.warn('[remotedraw] The user consent gate is disabled: '
-                + 'remote draw sessions will start without asking.');
-            return () => true;
-        }
-        if (typeof requestConsent === 'function') {
-            return requestConsent;
-        }
-        console.warn('[remotedraw] No requestConsent callback provided: '
-            + 'remote draw sessions will be denied by default.');
-        return () => false;
-    }
-
-    /**
-     * Cleanup any handlers
+     * Cleanup any handlers.
      */
     cleanup() {
-        ipcMain.removeListener(GET_DISPLAY_EVENT, this._handleGetDisplayEvent);
-        ipcMain.removeHandler(RD_START);
-        // ipcMain.removeListener(SCREEN_SHARE_EVENTS_CHANNEL, this._onScreenSharingEvent);
-        ipcMain.removeListener(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, this._onDrawEvent);
+        removeInvokeRoute(RD_START, this._webContents);
+        removeInvokeRoute(GET_DISPLAY_EVENT, this._webContents);
+        removeSendRoute(SCREEN_SHARE_DRAW_EVENTS_CHANNEL, this._webContents);
         screen.removeListener(DISPLAY_METRICS_CHANGED, this._handleDisplayMetricsChanged);
     }
 
     /**
+     * Resolves the `requestConsent` option into the function `_handleStart`
+     * calls.
+     *
+     * `false` opts out of the gate: every requested session starts without
+     * asking. That is only defensible when the embedder can guarantee that a
+     * start request cannot originate from untrusted web content - for instance
+     * a kiosk or support appliance that loads a single deployment it controls,
+     * and that has already obtained consent out of band. It is NOT defensible
+     * for a general purpose client whose server URL the user (or an attacker)
+     * can point anywhere: the request arrives as an iframe -> top frame
+     * postMessage, so with the gate off any page loaded in the meeting iframe
+     * can open the draw overlay with no interaction at all.
+     *
+     * @param {function(Object): Promise<boolean>|boolean|false|undefined} requestConsent - The
+     * option as passed by the embedder.
+     * @returns {function(Object): Promise<boolean>|boolean} The consent function.
+     */
+    _resolveRequestConsent(requestConsent) {
+        if (requestConsent === false) {
+            console.warn('[remotedraw] The user consent gate is disabled: remote draw sessions '
+                + 'will start without asking.');
+
+            return () => true;
+        }
+
+        return requestConsent || this._showConsentDialog.bind(this);
+    }
+
+    /**
+     * Shows the default consent dialog: a native, modal message box parented to
+     * the meeting window. Web content can neither render, click nor dismiss it,
+     * which is the point - it holds even if both the Jitsi Meet iframe and the
+     * renderer hosting it are fully compromised.
+     *
+     * @returns {Promise<boolean>} Whether the user allowed the session.
+     */
+    async _showConsentDialog() {
+        const { response } = await dialog.showMessageBox(this._jitsiMeetWindow, {
+            type: 'warning',
+            buttons: [ 'Deny', 'Allow' ],
+            defaultId: 0,
+            cancelId: 0,
+            message: 'Allow remote drawing on this computer?',
+            detail: 'A meeting participant is requesting to draw on your screen.'
+        });
+
+        return response === 1;
+    }
+
+    /**
      * Handles the RD_START request: asks the user for consent, then resolves
-     * the shared display for the given sourceId.
+     * and stores the display for the shared sourceId and opens the draw
+     * overlay on it.
+     *
+     * The consent gate lives here rather than in the renderer on purpose. The
+     * start request reaches the renderer as an iframe -> top frame postMessage,
+     * a channel that carries no trustworthy identity, so the only consent that
+     * cannot be forged by the page is one collected by the main process.
      *
      * @param {IpcMainInvokeEvent} event - The electron event.
      * @param {string} sourceId - The source id of the desktop sharing stream.
-     * @returns {Promise<Object>} `{ result: true, display }` on success, else `{ error }`.
+     * @returns {Promise<Object>} `{ result: true }` on success, otherwise `{ error }`.
      */
     async _handleStart(event, sourceId) {
         if (this._consentPending) {
             return { error: 'Error: a remote draw request is already pending' };
         }
+
         this._consentPending = true;
 
         let granted;
+
         try {
             granted = await this._requestConsent({ sourceId });
         } catch (error) {
-            console.error('[remotedraw] Error requesting consent:', error && error.message);
+            console.error('Error requesting remote draw consent:', error && error.message);
             granted = false;
         } finally {
             this._consentPending = false;
@@ -113,26 +177,33 @@ class RemoteDraw {
             return { error: 'Error: remote draw denied by the user' };
         }
 
+        // The window may have gone away while the dialog was up, in which case
+        // the session (and its IPC routes) no longer exist.
         if (this._jitsiMeetWindow.isDestroyed()) {
             return { error: 'Error: the meeting window is gone' };
         }
 
-        const display = this._getDisplay(sourceId);
+        this._display = this._getDisplay(sourceId);
 
-        if (display) {
-            return { result: true, display };
+        if (this._display) {
+            this._createScreenDraw();
+
+            return { result: true };
         }
 
         return { error: 'Error: Can\'t detect the display that is currently shared' };
     }
 
     /**
-     * Handles GET_DISPLAY_EVENT event
-     * @param {IPCMainEvent} event - The electron event
+     * Handles the GET_DISPLAY_EVENT request.
+     *
+     * @param {IpcMainInvokeEvent} event - The electron event.
      * @param {string} sourceId - The source id of the desktop sharing stream.
+     * @returns {Object|undefined} The display matching the sourceId, or
+     * undefined when it cannot be resolved.
      */
     _handleGetDisplayEvent(event, sourceId) {
-        event.returnValue = this._getDisplay(sourceId);
+        return this._getDisplay(sourceId);
     }
 
     /**
@@ -147,13 +218,6 @@ class RemoteDraw {
     /**
      * Returns the display metrics(x, y, width, height, scaleFactor, etc...) of the display that will be used for the
      * remote draw.
-     *
-     * @param {string} sourceId - The source id of the desktop sharing stream.
-     * @returns {Object} bounds and scaleFactor of display matching sourceId.
-     */
-     /**
-     * Returns the display metrics(x, y, width, height, scaleFactor, etc...) of the display that will be used for the
-     * remote control.
      *
      * @param {string} sourceId - The source id of the desktop sharing stream.
      * @returns {Object} bounds and scaleFactor of display matching sourceId.
@@ -227,6 +291,13 @@ class RemoteDraw {
         }
     }
 
+    /**
+     * Handles the draw marker events sent by the renderer: starts the overlay
+     * session, stops it, or forwards the event to the overlay window.
+     *
+     * @param {IpcMainEvent} event - The electron event.
+     * @param {Object} datas - Channel specific data.
+     */
     _onDrawEvent(event, datas) {
         const { data } = datas;
         switch (data.name) {
@@ -271,6 +342,9 @@ class RemoteDraw {
     //     }
     // }
 
+    /**
+     * Closes the draw overlay window, if any.
+     */
     _stop() {
         if (this._screenShareDrawer) {
             // this._screenShareDrawer.webContents.close();
@@ -389,4 +463,17 @@ class RemoteDraw {
     }
 }
 
-module.exports = RemoteDraw;
+/**
+ * Initializes the remote draw functionality in the main electron process.
+ *
+ * @param {BrowserWindow} jitsiMeetWindow - the BrowserWindow object which displays the meeting.
+ * @param {Object} [options] - Optional configuration.
+ * @param {function(Object): Promise<boolean>|boolean|false} [options.requestConsent] - Asks the
+ * user whether a remote draw session may start, receiving `{ sourceId }`. Defaults to a native
+ * message box parented to `jitsiMeetWindow`. Pass `false` to disable the gate entirely, which is
+ * only safe when a start request cannot come from untrusted web content.
+ * @returns {RemoteDraw} - the remote draw object.
+ */
+module.exports = function setupRemoteDrawMain(jitsiMeetWindow, options) {
+    return new RemoteDraw(jitsiMeetWindow, options);
+};
