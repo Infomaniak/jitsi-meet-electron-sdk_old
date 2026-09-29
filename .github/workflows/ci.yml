@@ -19,19 +19,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # windows-latest now ships Visual Studio 18 (2026), which the
-          # node-gyp bundled with Node 20 cannot detect
-          # ("unknown version \"undefined\""); pin the VS 2022 image so the
-          # native win32 prebuilds keep building.
+          # The win32-arm64 prebuild is cross-compiled in the x64 job below:
+          # the windows-11-arm runner now ships only Visual Studio 18 (2026),
+          # which the node-gyp bundled with Node 20 cannot detect
+          # (nodejs/node-gyp#3282, "unknown version \"undefined\"").
           - os: windows-2022
             arch: x86
             build-group: win32-x86
           - os: windows-2022
             arch: x64
             build-group: win32-x64
-          - os: windows-11-arm
-            arch: arm64
-            build-group: win32-arm64
     steps:
     - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
     - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
@@ -44,6 +41,14 @@ jobs:
     - name: Prebuildify
       run: npm run prebuild
       shell: bash
+    # Cross-compile the win32-arm64 prebuild with the VS 2022 ARM64 toolset.
+    # continue-on-error: if the ARM64 toolset is unavailable, the release
+    # still ships with the x86/x64 prebuilds instead of blocking the publish.
+    - name: Prebuildify (win32-arm64 cross-compile)
+      if: matrix.arch == 'x64'
+      run: npm run prebuild -- --arch arm64
+      shell: bash
+      continue-on-error: true
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
       with:
         name: prebuilds-${{ matrix.build-group }}
