@@ -1,4 +1,3 @@
-// @flow
 import styled from 'styled-components';
 import * as React from 'react';
 
@@ -18,23 +17,10 @@ const SVGCanvas = styled.svg`
   height: 100%;
 `;
 
-/**
- * Todo
- *
- * returns {todo}
- */
 export default function Draw() {
     const rSoak = React.useRef(null);
 
     const events = [];
-
-    //   const ref = useSvgResizer();
-
-    //   const marks = useSelector(state => state.data.marks);
-    //   const currentMark = useSelector(state => state.data.currentMark)
-    //   const showTrace = useSelector(state => state.data.settings.showTrace)
-    //   const darkMode = useSelector(state => state.data.settings.darkMode)
-    //   const penMode = useSelector(state => state.data.settings.penMode)
 
     React.useEffect(() => {
         /**
@@ -42,7 +28,9 @@ export default function Draw() {
          *
          * returns {todo}
          */
-        function preventDefault(e: TouchEvent) {
+        
+
+        function preventDefault(e) {
             e.preventDefault();
         }
 
@@ -88,10 +76,6 @@ export default function Draw() {
                             stroke='#000'
                             fill='#000'
                         >
-                            {/* {marks.map((mark, i) => (
-                <MarkPath key={mark.id} mark={mark} />
-              ))}
-              {currentMark && <MarkPath mark={currentMark} />} */}
                         </g>
                     </SVGCanvas>
                 </Wrapper>

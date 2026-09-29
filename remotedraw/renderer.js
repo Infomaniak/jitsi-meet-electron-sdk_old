@@ -1,38 +1,33 @@
-
-/* global */
-
-/* eslint-disable eqeqeq */
-/* eslint-disable no-mixed-operators */
-const { ipcRenderer } = require('electron');
-const os = require('os');
 const postis = require('postis');
-const constants = require('./constants');
-
-// const robot = require('@jitsi/robotjs');
-
 const {
     EVENTS,
     MOUSE_ACTIONS_FROM_EVENT_TYPE,
-    RD_START,
     REMOTE_DRAW_MESSAGE_NAME,
     REQUESTS
-} = constants;
+} = require('./constants');
 
 /**
- * Parses the remote draw events and executes them via robotjs.
- * {@link RemoteDrawMain} needs to be initialized in the main process.
- * to work.
+ * Renderer process component that sets up the remote draw functionality in the
+ * page ("main world") hosting the Jitsi Meet iframe. It relays remote draw
+ * messages between the iframe (postis) and the main process, scaling the
+ * incoming coordinates to the shared display's metrics. This module is
+ * browser-safe: it never requires `electron` or `os` and talks to the main
+ * process only through the `window.jitsiElectronSDK.remoteDraw` bridge exposed
+ * by the SDK preload.
+ * {@link RemoteDraw} needs to be initialized in the main process to work.
  */
-class RemoteDraw {
+class RemoteDrawRenderHook {
     /**
-     * Constructs new instance and initializes the remote draw functionality.
+     * Constructs a new instance and initializes the remote draw functionality.
      *
-     * @param {HTMLElement} iframe the Jitsi Meet iframe.
+     * @param {JitsiIFrameApi} api - The Jitsi Meet iframe api object.
      */
     constructor(api) {
-        // this._iframe = iframe;
         this._api = api;
+        this._bridge = window.jitsiElectronSDK?.remoteDraw;
         this._iframe = this._api.getIFrame();
+
+        this._onScreenSharingStatusChanged = this._onScreenSharingStatusChanged.bind(this);
 
         this._iframe.addEventListener('load', () => this._onIFrameLoad());
 
@@ -65,7 +60,7 @@ class RemoteDraw {
      * @returns {number} The scale factor.
      */
     _getDisplayScaleFactor() {
-        return os.type() === 'Darwin' ? 1 : this._display.scaleFactor || 1;
+        return this._bridge.platform === 'darwin' ? 1 : this._display.scaleFactor || 1;
     }
 
     /**
@@ -76,15 +71,21 @@ class RemoteDraw {
      * @returns {void}
      */
     _setDisplayMetrics(sourceId) {
-        this._display = ipcRenderer.sendSync('jitsi-remotedraw-get-display', sourceId);
+        this._bridge.getDisplay(sourceId)
+            .then(display => {
+                this._display = display;
+            })
+            .catch(() => {
+                this._display = undefined;
+            });
     }
 
     /**
      * Handles remote draw start messages.
      *
-     * Asks the main process for consent before proceeding. The main process
-     * owns the consent gate because the start request arrives from the iframe
-     * via postMessage (an untrusted channel).
+     * The main process owns the consent gate: {@link RemoteDraw} asks the user
+     * before resolving the display and opening the draw overlay, and replies
+     * on the start request.
      *
      * @param {number} id - the id of the request that will be used for the
      * response.
@@ -96,36 +97,31 @@ class RemoteDraw {
             type: 'response'
         };
 
-        let consentResult;
+        let startResult;
+
         try {
-            consentResult = await ipcRenderer.invoke(RD_START, sourceId);
+            startResult = await this._bridge.start(sourceId);
         } catch (error) {
-            consentResult = { error: `Error: ${error && error.message}` };
+            startResult = { error: `Error: ${error && error.message}` };
         }
 
-        if (consentResult && consentResult.result) {
-            this._displayMetricsChangeListener = () => {
-                this._setDisplayMetrics(sourceId);
-            };
-            ipcRenderer.on('jitsi-remotedraw-displays-changed', this._displayMetricsChangeListener);
+        if (startResult && startResult.result) {
+            // Keep the display metrics in sync while the session is active:
+            // the main process pushes a payload-less notification whenever the
+            // displays change.
+            this._unsubscribeDisplaysChanged = this._bridge.onDisplaysChanged(
+                () => this._setDisplayMetrics(sourceId));
 
-            this._display = consentResult.display
-                || ipcRenderer.sendSync('jitsi-remotedraw-get-display', sourceId);
+            this._display = await this._bridge.getDisplay(sourceId).catch(() => undefined);
 
             if (this._display) {
                 response.result = true;
-                ipcRenderer.send(constants.SCREEN_SHARE_DRAW_EVENTS_CHANNEL, {
-                    data: {
-                        name: 'start',
-                        display: this._display
-                    },
-                });
             } else {
                 response.error
                     = 'Error: Can\'t detect the display that is currently shared';
             }
         } else {
-            response.error = (consentResult && consentResult.error)
+            response.error = (startResult && startResult.error)
                 || 'Error: remote draw denied by the user';
         }
 
@@ -138,16 +134,12 @@ class RemoteDraw {
     _stop() {
         this._display = undefined;
 
-        if (this._displayMetricsChangeListener) {
-            ipcRenderer.removeListener('jitsi-remotedraw-displays-changed', this._displayMetricsChangeListener);
-            this._displayMetricsChangeListener = undefined;
+        if (this._unsubscribeDisplaysChanged) {
+            this._unsubscribeDisplaysChanged();
+            this._unsubscribeDisplaysChanged = undefined;
         }
 
-        ipcRenderer.send(constants.SCREEN_SHARE_DRAW_EVENTS_CHANNEL, {
-            data: {
-                name: EVENTS.stop
-            }
-        });
+        this._bridge.sendEvent({ type: EVENTS.stop });
     }
 
     /**
@@ -174,11 +166,6 @@ class RemoteDraw {
             this._sendEvent({ type: EVENTS.supported });
         });
 
-        // ipcRenderer.on(SCREEN_SHARE_EVENTS_CHANNEL, (event) => {
-        //     console.log(event);
-        //     this._sendMessage(event.data);
-        // });
-
         this._api.on('screenSharingStatusChanged', this._onScreenSharingStatusChanged);
     }
 
@@ -196,11 +183,7 @@ class RemoteDraw {
         } else {
             this._isScreenSharing = false;
 
-            ipcRenderer.send(constants.SCREEN_SHARE_DRAW_EVENTS_CHANNEL, {
-                data: {
-                    name: EVENTS.stop
-                }
-            });
+            this._bridge.sendEvent({ type: EVENTS.stop });
         }
     }
 
@@ -214,7 +197,7 @@ class RemoteDraw {
         // If we haven't set the display prop. We haven't received the remote
         // draw start message or there was an error associating a display.
         if (!this._display
-            && data.type != REQUESTS.start) {
+            && data.type !== REQUESTS.start) {
             return;
         }
         switch (data.type) {
@@ -224,18 +207,14 @@ class RemoteDraw {
             const destX = data.x * width * scaleFactor;
             const destY = data.y * height * scaleFactor;
 
-            ipcRenderer.send(constants.SCREEN_SHARE_DRAW_EVENTS_CHANNEL, {
-                data: {
-                    type: data.type,
-                    destX,
-                    destY,
-                    color: data.color,
-                    participantId: data.participantId,
-                    nameLabel: data.nameLabel
-                },
-                display: this._display
-            });
-
+            this._bridge.sendEvent({
+                type: data.type,
+                destX,
+                destY,
+                color: data.color,
+                participantId: data.participantId,
+                nameLabel: data.nameLabel
+            }, this._display);
 
             break;
         }
@@ -244,30 +223,16 @@ class RemoteDraw {
             this._mouseButtonStatus
                     = MOUSE_ACTIONS_FROM_EVENT_TYPE[data.type];
 
-            ipcRenderer.send(constants.SCREEN_SHARE_DRAW_EVENTS_CHANNEL, {
-                data: {
-                    type: data.type,
-                    status: this._mouseButtonStatus,
-                    color: data.color,
-                    participantId: data.participantId,
-                    nameLabel: data.nameLabel
-                },
-                display: this._display
-            });
+            this._bridge.sendEvent({
+                type: data.type,
+                status: this._mouseButtonStatus,
+                color: data.color,
+                participantId: data.participantId,
+                nameLabel: data.nameLabel
+            }, this._display);
 
             break;
         }
-
-        // case EVENTS.keydown:
-        // case EVENTS.keyup: {
-        //     if (data.key) {
-        //         robot.keyToggle(
-        //                 data.key,
-        //                 KEY_ACTIONS_FROM_EVENT_TYPE[data.type],
-        //                 data.modifiers);
-        //     }
-        //     break;
-        // }
         case REQUESTS.start: {
             this._start(id, data.sourceId);
             break;
@@ -308,4 +273,13 @@ class RemoteDraw {
     }
 }
 
-module.exports = RemoteDraw;
+/**
+ * Initializes the remote draw functionality in the renderer process containing the
+ * jitsi meet iframe.
+ *
+ * @param {JitsiIFrameApi} api - The Jitsi Meet iframe api object.
+ * @returns {RemoteDrawRenderHook} The remote draw render hook instance.
+ */
+module.exports = function setupRemoteDrawRender(api) {
+    return new RemoteDrawRenderHook(api);
+};

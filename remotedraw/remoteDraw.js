@@ -92,7 +92,7 @@ var draws = {};
 //   ctx.fill(path);
 // }
 
-function draw(id, strokeOptions = {}, gco = "source-over", coords = undefined) {
+function draw(id, gco = "source-over") {
   ctx.fillStyle = draws[id].color;
   ctx.strokeStyle = draws[id].color;
   ctx.globalCompositeOperation = gco;

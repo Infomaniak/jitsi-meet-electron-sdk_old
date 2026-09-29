@@ -1,7 +1,7 @@
-const RemoteDrawMain = require('./main');
-const RemoteDraw = require('./render');
+const setupRemoteDrawMain = require('./main');
+const setupRemoteDrawRender = require('./renderer');
 
 module.exports = {
-    RemoteDrawMain,
-    RemoteDraw
+    setupRemoteDrawMain,
+    setupRemoteDrawRender
 };

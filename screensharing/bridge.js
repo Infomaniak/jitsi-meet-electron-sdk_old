@@ -1,0 +1,214 @@
+const { SCREEN_SHARE_EVENTS, SCREEN_SHARE_EVENTS_CHANNEL, SCREEN_SHARE_GET_SOURCES } = require('./constants');
+
+/**
+ * Upper bound, in pixels, for a requested thumbnail dimension. A picker
+ * preview never needs more than this, so anything larger is clamped down.
+ * @type {number}
+ */
+const MAX_THUMBNAIL_DIMENSION = 320;
+
+/**
+ * Coerces one thumbnail dimension into a safe integer in
+ * `[0, MAX_THUMBNAIL_DIMENSION]`. Non-finite or negative values become 0.
+ *
+ * @param {*} value - The raw width/height from the main world.
+ * @returns {number} A bounded, integer pixel size.
+ */
+function clampDimension(value) {
+    const n = Number(value);
+
+    if (!Number.isFinite(n) || n <= 0) {
+        return 0;
+    }
+
+    return Math.min(Math.floor(n), MAX_THUMBNAIL_DIMENSION);
+}
+
+/**
+ * Restricts `desktopCapturer.getSources` options to the known, cloneable fields
+ * before they are forwarded to the main process. Anything else is dropped as
+ * defense-in-depth against a compromised main world.
+ *
+ * @param {Object} options - The options object received from the main world.
+ * @returns {Object} A sanitized options object.
+ */
+function sanitizeSourceOptions(options) {
+    const opts = options && typeof options === 'object' ? options : {};
+    const safe = {
+        types: Array.isArray(opts.types)
+            ? opts.types.filter(type => typeof type === 'string')
+            : [ 'screen', 'window' ]
+    };
+
+    if (opts.thumbnailSize && typeof opts.thumbnailSize === 'object') {
+        safe.thumbnailSize = {
+            height: clampDimension(opts.thumbnailSize.height),
+            width: clampDimension(opts.thumbnailSize.width)
+        };
+    }
+
+    if (typeof opts.fetchWindowIcons === 'boolean') {
+        safe.fetchWindowIcons = opts.fetchWindowIcons;
+    }
+
+    return safe;
+}
+
+/**
+ * Shapes a picked desktop source down to the `{ id, name }` strings the
+ * `getDisplayMedia` callback in the main process needs. Anything without a
+ * usable id is reported as no source at all: main hands the value straight to
+ * `callback({ video: source })`, and a malformed one would throw inside an
+ * `ipcMain.on` listener, i.e. crash the main process.
+ *
+ * @param {Object} source - The source from the main world.
+ * @returns {Object|null} `{ id, name? }`, or null when the source is unusable.
+ */
+function sanitizeSource(source) {
+    if (!source || typeof source !== 'object' || typeof source.id !== 'string') {
+        return null;
+    }
+
+    const sanitized = { id: source.id };
+
+    if (typeof source.name === 'string') {
+        sanitized.name = source.name;
+    }
+
+    return sanitized;
+}
+
+/**
+ * Whitelists an outgoing screen sharing event before it is sent to the main
+ * process. Events with an unknown name are dropped.
+ *
+ * @param {Object} data - The event payload from the main world.
+ * @returns {Object|null} A sanitized payload, or null when the event is invalid.
+ */
+function sanitizeOutgoingEvent(data) {
+    if (!data || typeof data !== 'object') {
+        return null;
+    }
+
+    const { name } = data;
+
+    if (!Object.values(SCREEN_SHARE_EVENTS).includes(name)) {
+        return null;
+    }
+
+    const sanitized = { name };
+
+    if ('requestId' in data) {
+        sanitized.requestId = data.requestId;
+    }
+    if ('source' in data) {
+        // A null source is the "picker cancelled" signal main already handles.
+        sanitized.source = sanitizeSource(data.source);
+    }
+    if ('screenShareAudio' in data) {
+        sanitized.screenShareAudio = Boolean(data.screenShareAudio);
+    }
+
+    return sanitized;
+}
+
+/**
+ * Serializes a single `desktopCapturer` source so it can cross the
+ * contextBridge. NativeImage instances (thumbnail, appIcon) do not survive the
+ * structured clone, so they are replaced by their data URL, preserving the
+ * `{ thumbnail: { dataUrl } }` shape the iframe API expects.
+ *
+ * @param {Object} source - A desktopCapturer source.
+ * @returns {Object} A cloneable representation of the source.
+ */
+function serializeSource(source) {
+    const { appIcon, thumbnail, ...rest } = source;
+    const serialized = { ...rest };
+
+    serialized.thumbnail = { dataUrl: thumbnail ? thumbnail.toDataURL() : null };
+
+    if (appIcon) {
+        serialized.appIcon = { dataUrl: appIcon.toDataURL() };
+    }
+
+    return serialized;
+}
+
+/**
+ * Restricts the permission settings pane anchor to the primitives the
+ * contextBridge can clone (undefined, string, number). Anything else is
+ * dropped as defense-in-depth against a compromised main world, so the invoke
+ * is dispatched without an anchor instead of risking a structured clone
+ * failure.
+ *
+ * @param {*} anchor - The anchor from the main world.
+ * @returns {string|number|undefined} The sanitized anchor.
+ */
+function sanitizeAnchor(anchor) {
+    return typeof anchor === 'string' || typeof anchor === 'number' ? anchor : undefined;
+}
+
+/**
+ * Builds the screen sharing fragment of the `window.jitsiElectronSDK` bridge.
+ *
+ * @param {Object} context - Preload helpers.
+ * @param {Electron.IpcRenderer} context.ipcRenderer - The ipcRenderer instance.
+ * @param {Function} context.subscribe - Channel subscription helper.
+ * @returns {Object} The screen sharing bridge API.
+ */
+module.exports = function createScreenSharingBridge({ ipcRenderer, subscribe }) {
+    return {
+        /**
+         * Fetches the available desktop capture sources with their thumbnails
+         * already serialized to data URLs.
+         *
+         * @param {Object} options - desktopCapturer.getSources options.
+         * @returns {Promise<Array<Object>>} The serialized sources.
+         */
+        getDesktopSources: async options => {
+            const sources = await ipcRenderer.invoke(SCREEN_SHARE_GET_SOURCES, sanitizeSourceOptions(options));
+
+            return sources.map(serializeSource);
+        },
+
+        /**
+         * Sends a screen sharing event to the main process.
+         *
+         * @param {Object} data - The event payload (must carry a known name).
+         * @returns {void}
+         */
+        sendEvent: data => {
+            const sanitized = sanitizeOutgoingEvent(data);
+
+            if (sanitized) {
+                ipcRenderer.send(SCREEN_SHARE_EVENTS_CHANNEL, { data: sanitized });
+            }
+        },
+
+        /**
+         * Subscribes to screen sharing events pushed from the main process.
+         *
+         * @param {Function} callback - Invoked with the event payload.
+         * @returns {Function} An unsubscribe function.
+         */
+        onEvent: callback => subscribe(SCREEN_SHARE_EVENTS_CHANNEL, callback),
+
+        /**
+         * Asks the main process to open the OS permission settings pane for
+         * screen capture (`System Settings > Privacy & Security > Screen
+         * Recording` on macOS), so the user can recover after denying the
+         * permission. The `ipcMain` handler is owned by the embedding app:
+         * when none is registered, the returned promise rejects.
+         *
+         * @param {string|number} [anchor] - Optional anchor identifying the settings pane to open.
+         * @returns {Promise<void>} Resolves once the settings pane has been opened.
+         */
+        openPermissionSettings: anchor => {
+            const safeAnchor = sanitizeAnchor(anchor);
+
+            return safeAnchor === undefined
+                ? ipcRenderer.invoke('open-permission-settings')
+                : ipcRenderer.invoke('open-permission-settings', safeAnchor);
+        }
+    };
+};
