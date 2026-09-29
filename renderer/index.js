@@ -2,6 +2,7 @@ const setupPictureInPictureRender = require('../pip/renderer');
 const initPopupsConfigurationRender = require('../popupsconfig/renderer');
 const setupPowerMonitorRender = require('../powermonitor/renderer');
 const setupRemoteControlRender = require('../remotecontrol/renderer');
+const setupRemoteDrawRender = require('../remotedraw/renderer');
 const setupScreenSharingRender = require('../screensharing/renderer');
 
 /**
@@ -18,5 +19,6 @@ module.exports = {
     setupPictureInPictureRender,
     setupPowerMonitorRender,
     setupRemoteControlRender,
+    setupRemoteDrawRender,
     setupScreenSharingRender
 };

@@ -4,6 +4,7 @@ const initPopupsConfigurationMain = require('../popupsconfig/main');
 const popupsConfigRegistry = require('../popupsconfig/PopupsConfigRegistry');
 const { cleanupPowerMonitorMain, setupPowerMonitorMain } = require('../powermonitor/main');
 const setupRemoteControlMain = require('../remotecontrol/main');
+const setupRemoteDrawMain = require('../remotedraw/main');
 const setupScreenSharingMain = require('../screensharing/main');
 
 /**
@@ -21,5 +22,6 @@ module.exports = {
     setupPictureInPictureMain,
     setupPowerMonitorMain,
     setupRemoteControlMain,
+    setupRemoteDrawMain,
     setupScreenSharingMain
 };
