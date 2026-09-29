@@ -1,4 +1,5 @@
-const process = require('process');
+/* global process */
+
 const {
     EVENTS,
     GET_DISPLAY_EVENT,
