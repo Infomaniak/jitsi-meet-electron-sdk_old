@@ -30,9 +30,9 @@ module-resolution error by design.
 
 | Entry point | Runs in | Exposes |
 | --- | --- | --- |
-| `@jitsi/electron-sdk/main` | Electron **main process** | `setupRemoteControlMain`, `setupScreenSharingMain`, `setupPowerMonitorMain`, `cleanupPowerMonitorMain`, `setupPictureInPictureMain`, `initPopupsConfigurationMain`, `getPopupTarget`, `popupsConfigRegistry` |
+| `@jitsi/electron-sdk/main` | Electron **main process** | `setupRemoteControlMain`, `setupRemoteDrawMain`, `setupScreenSharingMain`, `setupPowerMonitorMain`, `cleanupPowerMonitorMain`, `setupPictureInPictureMain`, `initPopupsConfigurationMain`, `getPopupTarget`, `popupsConfigRegistry` |
 | `@jitsi/electron-sdk/preload` | app **preload** script | `install()` — exposes the SDK bridge on the main world via `contextBridge` |
-| `@jitsi/electron-sdk/renderer` | the **page** ("main world") | `setupRemoteControlRender`, `setupScreenSharingRender`, `setupPowerMonitorRender`, `setupPictureInPictureRender`, `initPopupsConfigurationRender` |
+| `@jitsi/electron-sdk/renderer` | the **page** ("main world") | `setupRemoteControlRender`, `setupRemoteDrawRender`, `setupScreenSharingRender`, `setupPowerMonitorRender`, `setupPictureInPictureRender`, `initPopupsConfigurationRender` |
 
 ```
 ╔═ renderer process ═══════════════════════════════════════════════╗
@@ -194,6 +194,82 @@ remoteControl.dispose();
 
 NOTE: `dispose` is called automatically on the Jitsi Meet API `readyToClose` event or when
 the iframe API's own `dispose` method runs.
+
+### Remote Draw
+
+Enables a remote meeting participant to draw marker overlays on the screen being shared.
+The markers are rendered by a transparent, always-on-top overlay window owned by the main
+process; the page hosting Jitsi Meet only relays the draw events. The overlay window itself
+is internal to the SDK.
+
+**Requirements**:
+1. Jitsi Meet must be initialized through the [iframe API](https://github.com/jitsi/jitsi-meet/blob/master/doc/api.md).
+2. Screen sharing must be active: markers are drawn on the display backing the shared desktop
+   stream, and the overlay stops when screen sharing ends.
+3. `setupRemoteDrawRender` requires the preload bridge (`window.jitsiElectronSDK.remoteDraw`).
+
+In the **main** process:
+
+```Javascript
+const { setupRemoteDrawMain } = require('@jitsi/electron-sdk/main');
+
+// jitsiMeetWindow - the BrowserWindow where Jitsi Meet is loaded.
+setupRemoteDrawMain(jitsiMeetWindow);
+```
+
+**User consent**: as with remote control, every session start is gated on an explicit
+confirmation collected in the main process, because the start request arrives as an iframe →
+top-frame `postMessage` and carries no trustworthy identity; a prompt inside the meeting page
+is not a consent gate. By default a native, modal message box parented to `jitsiMeetWindow`
+asks "Allow remote drawing on this computer?"; web content can neither render, click nor
+dismiss it. Pass `requestConsent` to provide your own wording (for instance a localized
+dialog); it receives `{ sourceId }` and must resolve to `true` only when the user explicitly
+allowed the session. Whatever you supply must not be renderable or dismissable by web
+content.
+
+```Javascript
+setupRemoteDrawMain(jitsiMeetWindow, {
+    async requestConsent({ sourceId }) { // eslint-disable-line no-unused-vars
+        const { response } = await dialog.showMessageBox(jitsiMeetWindow, {
+            type: 'warning',
+            buttons: [ t('remoteDraw.deny'), t('remoteDraw.allow') ],
+            defaultId: 0,
+            cancelId: 0,
+            message: t('remoteDraw.message'),
+            detail: t('remoteDraw.detail')
+        });
+
+        return response === 1;
+    }
+});
+```
+
+Passing `requestConsent: false` disables the gate: every requested session starts, with no
+prompt and no interaction.
+
+```Javascript
+// Starts remote draw sessions unconditionally. Read the warning below first.
+setupRemoteDrawMain(jitsiMeetWindow, { requestConsent: false });
+```
+
+> [!WARNING]
+> Only do this when you can guarantee that a start request cannot originate from untrusted
+> web content — a kiosk or support appliance that loads one deployment you control, and that
+> has already obtained consent out of band.
+
+In the **renderer** (page hosting Jitsi Meet):
+
+```Javascript
+import { setupRemoteDrawRender } from '@jitsi/electron-sdk/renderer';
+
+// api - the Jitsi Meet iframe api object.
+const remoteDraw = setupRemoteDrawRender(api);
+```
+
+`setupRemoteDrawRender` relays marker events between the Jitsi Meet iframe (postis) and the
+main process, scaling them to the shared display's metrics. Calling `remoteDraw.dispose()`
+tears down the postis channel and the overlay session; it runs when the Jitsi Meet iframe
+unloads. Unlike remote control, there is no automatic `readyToClose` disposal.
 
 ### Screen Sharing
 

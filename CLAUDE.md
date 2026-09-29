@@ -37,6 +37,7 @@ The SDK is organized into feature-based modules that expose both **main process*
 ```
 index.js (main export)
 ├── remotecontrol/       # Remote desktop control via robotjs
+├── remotedraw/          # Remote draw marker overlay for screen sharing
 ├── screensharing/       # Screen sharing with desktop picker and tracker
 ├── pip/                 # Picture-in-picture for active speaker video
 ├── powermonitor/        # System idle and power events
@@ -62,6 +63,12 @@ Enables remote desktop control during Jitsi Meet sessions:
 - `RemoteControl`: Runs in renderer, relays start/stop/events between the Jitsi Meet iframe (postis) and the main process
 - Session start requires explicit consent collected in the main process (native modal dialog by default, overridable with `setupRemoteControlMain(window, { requestConsent })`, or disabled with `requestConsent: false`). The start request arrives as an iframe → top-frame `postMessage`, so no renderer-side prompt can be trusted
 - Windows native addon `sourceId2Coordinates` converts screen source IDs to coordinates
+
+#### Remote Draw (`remotedraw/`)
+Lets a remote meeting participant draw marker overlays on the screen being shared:
+- `setupRemoteDrawMain`: Runs in main process, gates session start on user consent, resolves the shared display, hosts the transparent draw overlay window and forwards the marker events to it
+- `setupRemoteDrawRender`: Runs in renderer, relays marker events between the Jitsi Meet iframe (postis) and the main process via the `remoteDraw` fragment of the SDK bridge
+- Session start requires explicit consent collected in the main process (native modal dialog by default, overridable with `setupRemoteDrawMain(window, { requestConsent })`, or disabled with `requestConsent: false`); same iframe → top-frame `postMessage` rationale as remote control
 
 #### Screen Sharing (`screensharing/`)
 Custom screen/window picker and sharing tracker:
@@ -94,7 +101,6 @@ Registry pattern for managing popup window configurations:
 
 ### Dependencies
 - `@jitsi/robotjs`: Fork of robotjs for remote control functionality
-- `electron-store`: Persistent storage
 - `postis`: Cross-origin iframe messaging
 - `@jitsi/logger`: Logging utility
 
