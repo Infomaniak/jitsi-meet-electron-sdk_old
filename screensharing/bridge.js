@@ -110,6 +110,20 @@ function serializeSource(source) {
 }
 
 /**
+ * Restricts the permission settings pane anchor to the primitives the
+ * contextBridge can clone (undefined, string, number). Anything else is
+ * dropped as defense-in-depth against a compromised main world, so the invoke
+ * is dispatched without an anchor instead of risking a structured clone
+ * failure.
+ *
+ * @param {*} anchor - The anchor from the main world.
+ * @returns {string|number|undefined} The sanitized anchor.
+ */
+function sanitizeAnchor(anchor) {
+    return typeof anchor === 'string' || typeof anchor === 'number' ? anchor : undefined;
+}
+
+/**
  * Builds the screen sharing fragment of the `window.jitsiElectronSDK` bridge.
  *
  * @param {Object} context - Preload helpers.
@@ -152,6 +166,24 @@ module.exports = function createScreenSharingBridge({ ipcRenderer, subscribe }) 
          * @param {Function} callback - Invoked with the event payload.
          * @returns {Function} An unsubscribe function.
          */
-        onEvent: callback => subscribe(SCREEN_SHARE_EVENTS_CHANNEL, callback)
+        onEvent: callback => subscribe(SCREEN_SHARE_EVENTS_CHANNEL, callback),
+
+        /**
+         * Asks the main process to open the OS permission settings pane for
+         * screen capture (`System Settings > Privacy & Security > Screen
+         * Recording` on macOS), so the user can recover after denying the
+         * permission. The `ipcMain` handler is owned by the embedding app:
+         * when none is registered, the returned promise rejects.
+         *
+         * @param {string|number} [anchor] - Optional anchor identifying the settings pane to open.
+         * @returns {Promise<void>} Resolves once the settings pane has been opened.
+         */
+        openPermissionSettings: anchor => {
+            const safeAnchor = sanitizeAnchor(anchor);
+
+            return safeAnchor === undefined
+                ? ipcRenderer.invoke('open-permission-settings')
+                : ipcRenderer.invoke('open-permission-settings', safeAnchor);
+        }
     };
 };

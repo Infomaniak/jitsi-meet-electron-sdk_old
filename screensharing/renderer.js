@@ -33,6 +33,21 @@ class ScreenShareRenderHook {
     }
 
     /**
+     * Opens the OS permission settings pane for screen capture (macOS:
+     * `System Settings > Privacy & Security > Screen Recording`) so the user
+     * can recover after denying the permission. Delegates to the
+     * `openPermissionSettings` method of the `screenSharing` bridge fragment
+     * exposed by the SDK preload.
+     *
+     * @param {string|number} [anchor] - Optional anchor identifying the settings pane to open.
+     * @returns {Promise<void>} Resolves once the settings pane has been opened; rejects when the
+     * embedding app registered no handler for it.
+     */
+    openMacPermissionSettings(anchor) {
+        return this._bridge.openPermissionSettings(anchor);
+    }
+
+    /**
      * Handle requests for desktop sources.
      * @param {Object} request - Request object from Electron.
      * @param {Function} callback - Callback to be invoked with the sources or error.
