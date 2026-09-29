@@ -54,7 +54,7 @@
     "postis": "^2.2.0"
   },
   "devDependencies": {
-    "eslint": ">=3",
+    "eslint": ">=10",
     "eslint-plugin-jsdoc": "*",
     "husky": "^9.0.10",
     "mocha": "^11.7.3",
