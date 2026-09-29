@@ -1,6 +1,7 @@
 /* global process */
 
 const {
+    DISPLAYS_CHANGED_EVENT,
     EVENTS,
     GET_DISPLAY_EVENT,
     MOUSE_ACTIONS_FROM_EVENT_TYPE,
@@ -245,6 +246,6 @@ module.exports = function createRemoteDrawBridge({ ipcRenderer, subscribe }) {
          * @param {Function} callback - Invoked with no payload.
          * @returns {Function} An unsubscribe function.
          */
-        onDisplaysChanged: callback => subscribe('jitsi-remotedraw-displays-changed', callback)
+        onDisplaysChanged: callback => subscribe(DISPLAYS_CHANGED_EVENT, callback)
     };
 };

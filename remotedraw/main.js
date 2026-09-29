@@ -9,11 +9,11 @@ const process = require('process');
 const os = require('os');
 const path = require('path');
 const {
+    DISPLAYS_CHANGED_EVENT,
     DISPLAY_METRICS_CHANGED,
     GET_DISPLAY_EVENT,
     RD_START,
     SCREEN_SHARE_DRAW_EVENTS_CHANNEL,
-    REQUESTS,
     EVENTS
 } = require('./constants');
 const { addInvokeRoute, addSendRoute, removeInvokeRoute, removeSendRoute } = require('../helpers/ipcRouter');
@@ -211,7 +211,7 @@ class RemoteDraw {
      */
     _handleDisplayMetricsChanged() {
         if (!this._jitsiMeetWindow.isDestroyed()) {
-            this._jitsiMeetWindow.webContents.send('jitsi-remotedraw-displays-changed');
+            this._jitsiMeetWindow.webContents.send(DISPLAYS_CHANGED_EVENT);
         }
     }
 
@@ -292,8 +292,9 @@ class RemoteDraw {
     }
 
     /**
-     * Handles the draw marker events sent by the renderer: starts the overlay
-     * session, stops it, or forwards the event to the overlay window.
+     * Handles the draw marker events coming from the renderer process:
+     * stops the remote drawing session, or forwards the event to the overlay
+     * window.
      *
      * @param {IpcMainEvent} event - The electron event.
      * @param {Object} datas - Channel specific data.
@@ -301,11 +302,6 @@ class RemoteDraw {
     _onDrawEvent(event, datas) {
         const { data } = datas;
         switch (data.name) {
-            case REQUESTS.start: {
-                this._display = data.display;
-                this._createScreenDraw();
-                break;
-            }
             case EVENTS.stop: {
                 this._stop();
                 break;

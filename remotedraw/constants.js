@@ -5,6 +5,13 @@ module.exports = {
     DISPLAY_METRICS_CHANGED: 'display-metrics-changed',
 
     /**
+     * IPC channel the main process pushes display-metrics-change
+     * notifications on (no payload) so the renderer re-fetches the shared
+     * display's metrics.
+     */
+    DISPLAYS_CHANGED_EVENT: 'jitsi-remotedraw-displays-changed',
+
+    /**
      * Types of remote-draw events.
      */
     EVENTS: {
