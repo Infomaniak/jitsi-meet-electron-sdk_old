@@ -146,10 +146,16 @@ class RemoteDrawRenderHook {
      * Handles iframe load events.
      */
     _onIFrameLoad() {
-        this._iframe.contentWindow.addEventListener(
-            'unload',
-            () => this.dispose()
-        );
+        try {
+            this._iframe.contentWindow.addEventListener(
+                'unload',
+                () => this.dispose()
+            );
+        } catch (error) {
+            // Cross-origin iframe: cannot access contentWindow directly. The
+            // unload hook is best-effort only; the postis channel below works
+            // through postMessage and must still be created.
+        }
         this._channel = postis({
             window: this._iframe.contentWindow,
             windowForEventListening: window,
