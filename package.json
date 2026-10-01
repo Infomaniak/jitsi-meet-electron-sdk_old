@@ -1,6 +1,6 @@
 {
   "name": "@infomaniak/jitsi-meet-electron-sdk",
-  "version": "6.1.1",
+  "version": "6.1.2",
   "description": "Utilities for jitsi-meet-electron project",
   "exports": {
     "./main": "./main/index.js",
