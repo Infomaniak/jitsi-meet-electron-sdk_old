@@ -49,7 +49,7 @@
   "dependencies": {
     "@jitsi/logger": "^2.0.2",
     "@jitsi/robotjs": "^0.6.15",
-    "node-addon-api": "^8.0.0",
+    "node-addon-api": "^8.9.2",
     "node-gyp-build": "4.8.4",
     "postis": "^2.2.0"
   },
